@@ -16,3 +16,8 @@ terraform {
 provider "aws" {
   region = "ap-northeast-1"
 }
+
+module "vpc" {
+  source       = "./modules/vpc"
+  project_name = "rag-portfolio"
+}
