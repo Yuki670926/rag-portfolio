@@ -32,3 +32,9 @@ module "cognito" {
   source       = "./modules/cognito"
   project_name = "rag-portfolio"
 }
+
+module "lambda" {
+  source               = "./modules/lambda"
+  project_name         = "rag-portfolio"
+  documents_bucket_arn = module.s3.documents_bucket_arn
+}
