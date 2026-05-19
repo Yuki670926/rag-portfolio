@@ -60,3 +60,10 @@ module "cloudfront" {
   frontend_bucket_arn                  = module.s3.frontend_bucket_arn
   frontend_bucket_regional_domain_name = module.s3.frontend_bucket_regional_domain_name
 }
+
+module "github_actions" {
+  source          = "./modules/github_actions"
+  project_name    = "rag-portfolio"
+  github_username = "Yuki670926"
+  github_repo     = "rag-portfolio"
+}
