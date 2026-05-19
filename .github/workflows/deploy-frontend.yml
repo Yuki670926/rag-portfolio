@@ -1,5 +1,8 @@
-﻿name: Deploy Frontend
+name: Deploy Frontend
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  
 on:
   push:
     branches:
@@ -15,7 +18,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
