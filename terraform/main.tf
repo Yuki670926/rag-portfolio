@@ -21,3 +21,9 @@ module "vpc" {
   source       = "./modules/vpc"
   project_name = "rag-portfolio"
 }
+
+module "s3" {
+  source       = "./modules/s3"
+  project_name = "rag-portfolio"
+  account_id   = "086769945521"
+}
