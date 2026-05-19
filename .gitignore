@@ -43,3 +43,38 @@ terraform.rc
 # Uncomment the line below if you want to ignore planout files.
 # planout
 *.zip
+
+# Lambda installed packages
+lambda/ingest/bin/
+lambda/ingest/dateutil/
+lambda/ingest/six.py
+lambda/ingest/*.dist-info/
+lambda/query/bin/
+lambda/query/dateutil/
+lambda/query/six.py
+lambda/query/*.dist-info/
+output.json
+
+lambda/ingest/boto3/
+lambda/ingest/botocore/
+lambda/ingest/certifi/
+lambda/ingest/charset_normalizer/
+lambda/ingest/idna/
+lambda/ingest/jmespath/
+lambda/ingest/opensearchpy/
+lambda/ingest/pypdf/
+lambda/ingest/requests/
+lambda/ingest/requests_aws4auth/
+lambda/ingest/s3transfer/
+lambda/ingest/urllib3/
+lambda/query/boto3/
+lambda/query/botocore/
+lambda/query/certifi/
+lambda/query/charset_normalizer/
+lambda/query/idna/
+lambda/query/jmespath/
+lambda/query/opensearchpy/
+lambda/query/requests/
+lambda/query/requests_aws4auth/
+lambda/query/s3transfer/
+lambda/query/urllib3/
