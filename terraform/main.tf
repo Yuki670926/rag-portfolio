@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 5.50"
     }
   }
   backend "s3" {
@@ -37,4 +37,10 @@ module "lambda" {
   source               = "./modules/lambda"
   project_name         = "rag-portfolio"
   documents_bucket_arn = module.s3.documents_bucket_arn
+}
+
+module "opensearch" {
+  source          = "./modules/opensearch"
+  project_name    = "rag-portfolio"
+  lambda_role_arn = module.lambda.lambda_role_arn
 }
