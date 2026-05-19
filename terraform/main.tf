@@ -27,3 +27,8 @@ module "s3" {
   project_name = "rag-portfolio"
   account_id   = "086769945521"
 }
+
+module "cognito" {
+  source       = "./modules/cognito"
+  project_name = "rag-portfolio"
+}
