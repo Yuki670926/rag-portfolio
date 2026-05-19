@@ -89,9 +89,21 @@ resource "aws_api_gateway_integration_response" "query_options" {
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
 
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.query.id,
+      aws_api_gateway_method.query_post.id,
+      aws_api_gateway_integration.query_lambda.id,
+      aws_api_gateway_gateway_response.cors_4xx.id,
+      aws_api_gateway_gateway_response.cors_5xx.id,
+    ]))
+  }
+
   depends_on = [
     aws_api_gateway_integration.query_lambda,
-    aws_api_gateway_integration_response.query_options
+    aws_api_gateway_integration_response.query_options,
+    aws_api_gateway_gateway_response.cors_4xx,
+    aws_api_gateway_gateway_response.cors_5xx,
   ]
 
   lifecycle {
@@ -117,3 +129,27 @@ resource "aws_lambda_permission" "api_gateway" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/*"
 }
+
+# CORS用ゲートウェイレスポンス
+resource "aws_api_gateway_gateway_response" "cors_4xx" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  response_type = "DEFAULT_4XX"
+
+  response_parameters = {
+    "gatewayresponse.header.Access-Control-Allow-Origin"  = "'https://d38x9mpoe8jmvg.cloudfront.net'"
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'POST,OPTIONS'"
+  }
+}
+
+resource "aws_api_gateway_gateway_response" "cors_5xx" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  response_type = "DEFAULT_5XX"
+
+  response_parameters = {
+    "gatewayresponse.header.Access-Control-Allow-Origin"  = "'https://d38x9mpoe8jmvg.cloudfront.net'"
+    "gatewayresponse.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization'"
+    "gatewayresponse.header.Access-Control-Allow-Methods" = "'POST,OPTIONS'"
+  }
+}
+
