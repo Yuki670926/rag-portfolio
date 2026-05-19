@@ -52,3 +52,11 @@ module "api_gateway" {
   query_lambda_arn        = module.lambda.query_lambda_arn
   query_lambda_invoke_arn = module.lambda.query_lambda_invoke_arn
 }
+
+module "cloudfront" {
+  source                               = "./modules/cloudfront"
+  project_name                         = "rag-portfolio"
+  frontend_bucket_id                   = module.s3.frontend_bucket_id
+  frontend_bucket_arn                  = module.s3.frontend_bucket_arn
+  frontend_bucket_regional_domain_name = module.s3.frontend_bucket_regional_domain_name
+}
