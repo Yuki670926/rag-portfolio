@@ -44,3 +44,11 @@ module "opensearch" {
   project_name    = "rag-portfolio"
   lambda_role_arn = module.lambda.lambda_role_arn
 }
+
+module "api_gateway" {
+  source                  = "./modules/api_gateway"
+  project_name            = "rag-portfolio"
+  cognito_user_pool_arn   = module.cognito.user_pool_arn
+  query_lambda_arn        = module.lambda.query_lambda_arn
+  query_lambda_invoke_arn = module.lambda.query_lambda_invoke_arn
+}
