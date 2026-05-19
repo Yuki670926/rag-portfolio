@@ -1,6 +1,8 @@
 ﻿import json
 import os
 import boto3
+from opensearchpy import OpenSearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
 
@@ -8,6 +10,25 @@ OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT", "")
 INDEX_NAME = "documents"
 TOP_K = 3
 
+def get_aws_auth():
+    credentials = boto3.Session().get_credentials()
+    return AWS4Auth(
+        credentials.access_key,
+        credentials.secret_key,
+        "ap-northeast-1",
+        "aoss",
+        session_token=credentials.token
+    )
+
+def get_opensearch_client():
+    host = OPENSEARCH_ENDPOINT.replace("https://", "")
+    return OpenSearch(
+        hosts=[{"host": host, "port": 443}],
+        http_auth=get_aws_auth(),
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection
+    )
 
 def get_embedding(text):
     response = bedrock_client.invoke_model(
@@ -17,10 +38,35 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
+def search_documents(query_embedding):
+    if not OPENSEARCH_ENDPOINT:
+        return []
+    try:
+        client = get_opensearch_client()
+        query = {
+            "size": TOP_K,
+            "query": {
+                "knn": {
+                    "embedding": {
+                        "vector": query_embedding,
+                        "k": TOP_K
+                    }
+                }
+            }
+        }
+        response = client.search(index=INDEX_NAME, body=query)
+        return [hit["_source"] for hit in response["hits"]["hits"]]
+    except Exception as e:
+        print(f"OpenSearch error: {str(e)}")
+        return []
 
 def generate_answer(question, contexts):
-    context_text = "\n\n".join([f"[出典: {c.get('source', 'unknown')}]\n{c.get('text', '')}" for c in contexts])
-    prompt = f"""以下のドキュメントを参考に、質問に答えてください。
+    context_text = "\n\n".join([
+        f"[出典: {c.get('source', 'unknown')}]\n{c.get('text', '')}"
+        for c in contexts
+    ])
+    if contexts:
+        prompt = f"""以下のドキュメントを参考に、質問に答えてください。
 ドキュメントに記載がない場合は「ドキュメントに該当する情報がありません」と答えてください。
 必ず出典を明記してください。
 
@@ -30,6 +76,11 @@ def generate_answer(question, contexts):
 質問: {question}
 
 回答:"""
+    else:
+        prompt = f"""質問: {question}
+
+回答:"""
+
     response = bedrock_client.invoke_model(
         modelId="anthropic.claude-3-haiku-20240307-v1:0",
         body=json.dumps({
@@ -40,7 +91,6 @@ def generate_answer(question, contexts):
     )
     body = json.loads(response["body"].read())
     return body["content"][0]["text"]
-
 
 def handler(event, context):
     try:
@@ -53,12 +103,16 @@ def handler(event, context):
                 "body": json.dumps({"error": "質問が空です"})
             }
         query_embedding = get_embedding(question)
-        contexts = []
+        contexts = search_documents(query_embedding)
         answer = generate_answer(question, contexts)
         return {
             "statusCode": 200,
             "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"answer": answer, "sources": []}, ensure_ascii=False)
+            "body": json.dumps({
+                "answer": answer,
+                "sources": list(set([c.get("source") for c in contexts if c.get("source")])),
+                "context_count": len(contexts)
+            }, ensure_ascii=False)
         }
     except Exception as e:
         print(f"Error: {str(e)}")

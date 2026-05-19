@@ -33,10 +33,18 @@ module "cognito" {
   project_name = "rag-portfolio"
 }
 
+# module "lambda" {
+#   source               = "./modules/lambda"
+#   project_name         = "rag-portfolio"
+#   documents_bucket_arn = module.s3.documents_bucket_arn
+# }
+
+# 2026-05-19 OpenSearchのエンドポイントをoutputに追加して、Lambdaに渡す
 module "lambda" {
   source               = "./modules/lambda"
   project_name         = "rag-portfolio"
   documents_bucket_arn = module.s3.documents_bucket_arn
+  opensearch_endpoint  = module.opensearch.collection_endpoint
 }
 
 module "opensearch" {
