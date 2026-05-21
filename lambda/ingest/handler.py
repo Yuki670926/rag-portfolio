@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import boto3
 import urllib.parse

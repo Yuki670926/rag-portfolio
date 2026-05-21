@@ -75,3 +75,14 @@ module "github_actions" {
   github_username = "Yuki670926"
   github_repo     = "rag-portfolio"
 }
+
+module "presigned_url" {
+  source                = "./modules/presigned_url"
+  project_name          = "rag-portfolio"
+  lambda_role_arn       = module.lambda.lambda_role_arn
+  documents_bucket_name = module.s3.documents_bucket_name
+  rest_api_id           = module.api_gateway.rest_api_id
+  root_resource_id      = module.api_gateway.root_resource_id
+  authorizer_id         = module.api_gateway.authorizer_id
+  execution_arn         = module.api_gateway.execution_arn
+}

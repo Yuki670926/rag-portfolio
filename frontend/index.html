@@ -130,12 +130,12 @@
 
 <script>
   const CONFIG = {
-    API_URL: "https://s1o0o9gx4b.execute-api.ap-northeast-1.amazonaws.com/prod",
-    USER_POOL_ID: "ap-northeast-1_LiJgggSA6",
-    CLIENT_ID: "7vb667r6b3csna7ael3t1mebdr",
-    REGION: "ap-northeast-1",
-    DOCUMENTS_BUCKET: "rag-portfolio-documents-086769945521"
-  };
+  API_URL: "https://s1o0o9gx4b.execute-api.ap-northeast-1.amazonaws.com/prod",
+  USER_POOL_ID: "ap-northeast-1_LiJgggSA6",
+  CLIENT_ID: "7vb667r6b3csna7ael3t1mebdr",
+  REGION: "ap-northeast-1",
+  DOCUMENTS_BUCKET: "rag-portfolio-documents-086769945521"
+};
 
   let idToken = null;
   let currentUser = null;
@@ -271,23 +271,57 @@
   }
 
   async function uploadFile() {
-    const file = document.getElementById("fileInput").files[0];
-    if (!file) return;
+  const file = document.getElementById("fileInput").files[0];
+  if (!file) return;
 
-    document.getElementById("uploadBtn").disabled = true;
-    document.getElementById("uploadStatus").textContent = "アップロード中...";
+  document.getElementById("uploadBtn").disabled = true;
+  document.getElementById("uploadStatus").textContent = "署名付きURLを取得中...";
 
-    try {
-      // S3への署名付きURLを取得してアップロード
-      // 今は簡易的にAPI経由でアップロードする想定
-      document.getElementById("uploadStatus").textContent =
-        "✅ アップロード完了！ドキュメントの処理には数分かかります。";
-    } catch (e) {
-      document.getElementById("uploadStatus").textContent = "エラー: " + e.message;
+  try {
+    // Step1: Presigned URLを取得
+    const res = await fetch(`${CONFIG.API_URL}/upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": idToken
+      },
+      body: JSON.stringify({
+        filename: file.name,
+        content_type: "application/pdf"
+      })
+    });
+
+    const data = await res.json();
+    if (!data.upload_url) {
+      throw new Error(data.error || "URLの取得に失敗しました");
     }
 
-    document.getElementById("uploadBtn").disabled = false;
+    document.getElementById("uploadStatus").textContent = "S3にアップロード中...";
+
+    // Step2: S3に直接アップロード
+    const uploadRes = await fetch(data.upload_url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/pdf"
+      },
+      body: file
+    });
+
+    if (!uploadRes.ok) {
+      throw new Error("S3へのアップロードに失敗しました");
+    }
+
+    document.getElementById("uploadStatus").textContent =
+      "✅ アップロード完了！ドキュメントの処理には数分かかります。";
+    document.getElementById("fileName").textContent = "";
+    document.getElementById("fileInput").value = "";
+
+  } catch (e) {
+    document.getElementById("uploadStatus").textContent = "❌ エラー: " + e.message;
   }
+
+  document.getElementById("uploadBtn").disabled = false;
+}
 </script>
 </body>
 </html>

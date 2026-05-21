@@ -78,3 +78,12 @@ lambda/query/requests/
 lambda/query/requests_aws4auth/
 lambda/query/s3transfer/
 lambda/query/urllib3/
+
+lambda/presigned_url/boto3/
+lambda/presigned_url/botocore/
+lambda/presigned_url/s3transfer/
+lambda/presigned_url/jmespath/
+lambda/presigned_url/dateutil/
+lambda/presigned_url/urllib3/
+lambda/presigned_url/six.py
+lambda/presigned_url/bin/
