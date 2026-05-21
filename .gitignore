@@ -87,3 +87,7 @@ lambda/presigned_url/dateutil/
 lambda/presigned_url/urllib3/
 lambda/presigned_url/six.py
 lambda/presigned_url/bin/
+
+lambda/presigned_url/__pycache__/
+lambda/presigned_url/*.dist-info/
+output6.json
