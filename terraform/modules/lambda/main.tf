@@ -54,6 +54,13 @@ resource "aws_iam_role_policy" "lambda" {
           "bedrock:InvokeModel"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "aoss:APIAccessAll"
+        ]
+        Resource = "*"
       }
     ]
   })

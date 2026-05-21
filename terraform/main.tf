@@ -23,9 +23,10 @@ module "vpc" {
 }
 
 module "s3" {
-  source       = "./modules/s3"
-  project_name = "rag-portfolio"
-  account_id   = "086769945521"
+  source            = "./modules/s3"
+  project_name      = "rag-portfolio"
+  account_id        = "086769945521"
+  ingest_lambda_arn = module.lambda.ingest_lambda_arn
 }
 
 module "cognito" {
@@ -33,13 +34,6 @@ module "cognito" {
   project_name = "rag-portfolio"
 }
 
-# module "lambda" {
-#   source               = "./modules/lambda"
-#   project_name         = "rag-portfolio"
-#   documents_bucket_arn = module.s3.documents_bucket_arn
-# }
-
-# 2026-05-19 OpenSearchのエンドポイントをoutputに追加して、Lambdaに渡す
 module "lambda" {
   source               = "./modules/lambda"
   project_name         = "rag-portfolio"

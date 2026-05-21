@@ -23,15 +23,15 @@ resource "aws_s3_bucket_versioning" "documents" {
   }
 }
 
-# resource "aws_s3_bucket_notification" "documents" {
-#   bucket = aws_s3_bucket.documents.id
+resource "aws_s3_bucket_notification" "documents" {
+  bucket = aws_s3_bucket.documents.id
 
-#   lambda_function {
-#     lambda_function_arn = var.ingest_lambda_arn
-#     events              = ["s3:ObjectCreated:*"]
-#     filter_suffix       = ".pdf"
-#   }
-# }
+  lambda_function {
+    lambda_function_arn = var.ingest_lambda_arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".pdf"
+  }
+}
 
 # フロントホスティング用バケット
 resource "aws_s3_bucket" "frontend" {
@@ -49,4 +49,15 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+resource "aws_s3_bucket_cors_configuration" "documents" {
+  bucket = aws_s3_bucket.documents.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "POST", "GET"]
+    allowed_origins = ["https://d38x9mpoe8jmvg.cloudfront.net"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
 }
