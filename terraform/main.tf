@@ -115,7 +115,7 @@ module "budgets" {
   source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v1.3.0"
   project_name = local.project_name
   environment  = var.environment
-  budget_limit = "100"
+  budget_limit = "75"
 }
 
 module "cloudwatch" {
