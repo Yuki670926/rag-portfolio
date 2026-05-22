@@ -39,8 +39,10 @@ module "s3" {
 }
 
 module "cognito" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v1.0.0"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v1.1.2"
   project_name = local.project_name
+  environment  = var.environment
+  admin_email  = "test@example.com"
 }
 
 module "lambda" {
