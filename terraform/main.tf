@@ -108,3 +108,9 @@ module "budgets" {
   environment  = var.environment
   budget_limit = "100"
 }
+
+module "cloudwatch" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v1.4.1"
+  project_name = local.project_name
+  aws_region   = var.aws_region
+}
