@@ -100,3 +100,16 @@ lambda/authorizer/pycparser/
 lambda/authorizer/__pycache__/
 lambda/authorizer/*.dist-info/
 lambda/authorizer/*.egg-info/
+
+lambda/authorizer/ecdsa/
+lambda/authorizer/rsa/
+lambda/authorizer/pyasn1/
+lambda/authorizer/cffi/
+lambda/authorizer/cryptography/
+lambda/authorizer/bin/
+lambda/authorizer/__pycache__/
+lambda/authorizer/*.dist-info/
+lambda/authorizer/*.egg-info/
+lambda/authorizer/six.py
+lambda/authorizer/*.pyd
+lambda/authorizer/*.so
