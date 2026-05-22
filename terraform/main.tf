@@ -54,10 +54,13 @@ module "cognito" {
 }
 
 module "lambda" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.0.0"
+  source               = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.5.0"
   project_name         = local.project_name
   documents_bucket_arn = module.s3.documents_bucket_arn
   opensearch_endpoint  = module.opensearch.collection_endpoint
+  aws_region           = var.aws_region
+  cognito_user_pool_id = module.cognito.user_pool_id
+  cognito_client_id    = module.cognito.user_pool_client_id
 }
 
 module "opensearch" {
@@ -67,11 +70,16 @@ module "opensearch" {
 }
 
 module "api_gateway" {
-  source                  = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v1.0.0"
-  project_name            = local.project_name
-  cognito_user_pool_arn   = module.cognito.user_pool_arn
-  query_lambda_arn        = module.lambda.query_lambda_arn
-  query_lambda_invoke_arn = module.lambda.query_lambda_invoke_arn
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v1.5.0"
+  project_name                 = local.project_name
+  cognito_user_pool_arn        = module.cognito.user_pool_arn
+  query_lambda_arn             = module.lambda.query_lambda_arn
+  query_lambda_invoke_arn      = module.lambda.query_lambda_invoke_arn
+  cloudfront_domain            = module.cloudfront.distribution_domain_name
+  cognito_user_pool_id         = module.cognito.user_pool_id
+  cognito_client_id            = module.cognito.user_pool_client_id
+  authorizer_lambda_invoke_arn = module.lambda.authorizer_lambda_invoke_arn
+  authorizer_lambda_arn        = module.lambda.authorizer_lambda_arn
 }
 
 module "cloudfront" {

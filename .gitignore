@@ -92,3 +92,11 @@ lambda/presigned_url/__pycache__/
 lambda/presigned_url/*.dist-info/
 output6.json
 terraform/schema.json
+
+lambda/authorizer/jose/
+lambda/authorizer/cryptography/
+lambda/authorizer/cffi/
+lambda/authorizer/pycparser/
+lambda/authorizer/__pycache__/
+lambda/authorizer/*.dist-info/
+lambda/authorizer/*.egg-info/
