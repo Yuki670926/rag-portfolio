@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.50"
     }
+    github = {
+      source  = "integrations/github"
+      version = ">= 5.0"
+    }
   }
   backend "s3" {}
 }
@@ -20,6 +24,10 @@ provider "aws" {
       Owner       = "Yuki670926"
     }
   }
+}
+
+provider "github" {
+  owner = "Yuki670926"
 }
 
 locals {
@@ -75,10 +83,12 @@ module "cloudfront" {
 }
 
 module "github_actions" {
-  source          = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v1.0.0"
-  project_name    = local.project_name
-  github_username = "Yuki670926"
-  github_repo     = "rag-portfolio"
+  source               = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v1.2.1"
+  project_name         = local.project_name
+  github_username      = "Yuki670926"
+  github_repo          = "rag-portfolio"
+  frontend_bucket_name = module.s3.frontend_bucket_name
+  cf_distribution_id   = module.cloudfront.distribution_id
 }
 
 module "presigned_url" {
