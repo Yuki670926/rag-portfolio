@@ -101,3 +101,10 @@ module "presigned_url" {
   authorizer_id         = module.api_gateway.authorizer_id
   execution_arn         = module.api_gateway.execution_arn
 }
+
+module "budgets" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v1.3.0"
+  project_name = local.project_name
+  environment  = var.environment
+  budget_limit = "100"
+}
