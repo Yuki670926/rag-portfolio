@@ -100,7 +100,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.0.0"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.5.1"
   project_name          = local.project_name
   lambda_role_arn       = module.lambda.lambda_role_arn
   documents_bucket_name = module.s3.documents_bucket_name
@@ -108,6 +108,7 @@ module "presigned_url" {
   root_resource_id      = module.api_gateway.root_resource_id
   authorizer_id         = module.api_gateway.authorizer_id
   execution_arn         = module.api_gateway.execution_arn
+  lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
 }
 
 module "budgets" {
