@@ -27,37 +27,37 @@ locals {
 }
 
 module "vpc" {
-  source       = "./modules/vpc"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.0.0"
   project_name = local.project_name
 }
 
 module "s3" {
-  source            = "./modules/s3"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v1.0.0"
   project_name      = local.project_name
   account_id        = var.account_id
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
 }
 
 module "cognito" {
-  source       = "./modules/cognito"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v1.0.0"
   project_name = local.project_name
 }
 
 module "lambda" {
-  source               = "./modules/lambda"
+  source               = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.0.0"
   project_name         = local.project_name
   documents_bucket_arn = module.s3.documents_bucket_arn
   opensearch_endpoint  = module.opensearch.collection_endpoint
 }
 
 module "opensearch" {
-  source          = "./modules/opensearch"
+  source          = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v1.0.0"
   project_name    = local.project_name
   lambda_role_arn = module.lambda.lambda_role_arn
 }
 
 module "api_gateway" {
-  source                  = "./modules/api_gateway"
+  source                  = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v1.0.0"
   project_name            = local.project_name
   cognito_user_pool_arn   = module.cognito.user_pool_arn
   query_lambda_arn        = module.lambda.query_lambda_arn
@@ -65,7 +65,7 @@ module "api_gateway" {
 }
 
 module "cloudfront" {
-  source                               = "./modules/cloudfront"
+  source                               = "github.com/Yuki670926/rag-portfolio-modules//cloudfront?ref=v1.0.0"
   project_name                         = local.project_name
   frontend_bucket_id                   = module.s3.frontend_bucket_id
   frontend_bucket_arn                  = module.s3.frontend_bucket_arn
@@ -73,14 +73,14 @@ module "cloudfront" {
 }
 
 module "github_actions" {
-  source          = "./modules/github_actions"
+  source          = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v1.0.0"
   project_name    = local.project_name
   github_username = "Yuki670926"
   github_repo     = "rag-portfolio"
 }
 
 module "presigned_url" {
-  source                = "./modules/presigned_url"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.0.0"
   project_name          = local.project_name
   lambda_role_arn       = module.lambda.lambda_role_arn
   documents_bucket_name = module.s3.documents_bucket_name
