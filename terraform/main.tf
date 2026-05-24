@@ -54,13 +54,15 @@ module "cognito" {
 }
 
 module "lambda" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.5.0"
-  project_name         = local.project_name
-  documents_bucket_arn = module.s3.documents_bucket_arn
-  opensearch_endpoint  = module.opensearch.collection_endpoint
-  aws_region           = var.aws_region
-  cognito_user_pool_id = module.cognito.user_pool_id
-  cognito_client_id    = module.cognito.user_pool_client_id
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.6.3"
+  project_name             = local.project_name
+  documents_bucket_arn     = module.s3.documents_bucket_arn
+  opensearch_endpoint      = module.opensearch.collection_endpoint
+  aws_region               = var.aws_region
+  cognito_user_pool_id     = module.cognito.user_pool_id
+  cognito_client_id        = module.cognito.user_pool_client_id
+  conversations_table_name = module.dynamodb.conversations_table_name
+  sessions_table_name      = module.dynamodb.sessions_table_name
 }
 
 module "opensearch" {
