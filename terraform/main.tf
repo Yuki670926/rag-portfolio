@@ -123,3 +123,8 @@ module "cloudwatch" {
   project_name = local.project_name
   aws_region   = var.aws_region
 }
+
+module "dynamodb" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v1.6.1"
+  project_name = local.project_name
+}
