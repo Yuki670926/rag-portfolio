@@ -7,14 +7,30 @@ from requests_aws4auth import AWS4Auth
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
+ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
 
-OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT", "")
+VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
 CONVERSATIONS_TABLE = os.environ.get("CONVERSATIONS_TABLE", "")
 SESSIONS_TABLE = os.environ.get("SESSIONS_TABLE", "")
 INDEX_NAME = "documents"
 TOP_K = 3
 MAX_HISTORY = 5
 TTL_DAYS = 90
+
+def get_vector_store_endpoint():
+    """SSM Parameter StoreからエンドポイントURLを取得"""
+    if not SSM_ENDPOINT_PARAM:
+        return ""
+    try:
+        response = ssm_client.get_parameter(
+            Name=SSM_ENDPOINT_PARAM,
+            WithDecryption=True
+        )
+        return response["Parameter"]["Value"]
+    except Exception as e:
+        print(f"SSM error: {str(e)}")
+        return ""
 
 def get_aws_auth():
     credentials = boto3.Session().get_credentials()
@@ -26,8 +42,8 @@ def get_aws_auth():
         session_token=credentials.token
     )
 
-def get_opensearch_client():
-    host = OPENSEARCH_ENDPOINT.replace("https://", "")
+def get_opensearch_client(endpoint):
+    host = endpoint.replace("https://", "")
     return OpenSearch(
         hosts=[{"host": host, "port": 443}],
         http_auth=get_aws_auth(),
@@ -45,26 +61,33 @@ def get_embedding(text):
     return body["embedding"]
 
 def search_documents(query_embedding):
-    if not OPENSEARCH_ENDPOINT:
-        return []
-    try:
-        client = get_opensearch_client()
-        query = {
-            "size": TOP_K,
-            "query": {
-                "knn": {
-                    "embedding": {
-                        "vector": query_embedding,
-                        "k": TOP_K
+    if VECTOR_STORE_TYPE == "opensearch":
+        endpoint = get_vector_store_endpoint()
+        if not endpoint:
+            return []
+        try:
+            client = get_opensearch_client(endpoint)
+            query = {
+                "size": TOP_K,
+                "query": {
+                    "knn": {
+                        "embedding": {
+                            "vector": query_embedding,
+                            "k": TOP_K
+                        }
                     }
                 }
             }
-        }
-        response = client.search(index=INDEX_NAME, body=query)
-        return [hit["_source"] for hit in response["hits"]["hits"]]
-    except Exception as e:
-        print(f"OpenSearch error: {str(e)}")
+            response = client.search(index=INDEX_NAME, body=query)
+            return [hit["_source"] for hit in response["hits"]["hits"]]
+        except Exception as e:
+            print(f"OpenSearch error: {str(e)}")
+            return []
+    elif VECTOR_STORE_TYPE == "s3_vectors":
+        print("S3 Vectors is not implemented yet")
         return []
+    return []
+    
 
 def get_session_id(user_id):
     try:

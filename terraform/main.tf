@@ -55,18 +55,20 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.6.5"
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.7.0"
   project_name             = local.project_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
-  opensearch_endpoint      = module.opensearch.collection_endpoint
   aws_region               = var.aws_region
   cognito_user_pool_id     = module.cognito.user_pool_id
   cognito_client_id        = module.cognito.user_pool_client_id
   conversations_table_name = module.dynamodb.conversations_table_name
   sessions_table_name      = module.dynamodb.sessions_table_name
+  vector_store_type        = var.vector_store_type
+  environment              = var.environment
 }
 
 module "opensearch" {
+  count           = var.vector_store_type == "opensearch" ? 1 : 0
   source          = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v1.0.0"
   project_name    = local.project_name
   lambda_role_arn = module.lambda.lambda_role_arn
@@ -130,4 +132,11 @@ module "cloudwatch" {
 module "dynamodb" {
   source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v1.6.1"
   project_name = local.project_name
+}
+
+module "ssm" {
+  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v1.6.8"
+  project_name          = local.project_name
+  environment           = var.environment
+  vector_store_endpoint = try(module.opensearch[0].collection_endpoint, "")
 }
