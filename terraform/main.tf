@@ -40,10 +40,11 @@ module "vpc" {
 }
 
 module "s3" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v1.0.0"
-  project_name      = local.project_name
-  account_id        = var.account_id
-  ingest_lambda_arn = module.lambda.ingest_lambda_arn
+  source                = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v1.6.4"
+  project_name          = local.project_name
+  account_id            = var.account_id
+  ingest_lambda_arn     = module.lambda.ingest_lambda_arn
+  cloudfront_domain     = module.cloudfront.distribution_domain_name
 }
 
 module "cognito" {
@@ -54,7 +55,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.6.3"
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.6.5"
   project_name             = local.project_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
   opensearch_endpoint      = module.opensearch.collection_endpoint
