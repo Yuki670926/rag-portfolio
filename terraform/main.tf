@@ -117,7 +117,7 @@ module "presigned_url" {
 }
 
 module "budgets" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v1.3.0"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v1.8.2"
   project_name = local.project_name
   environment  = var.environment
   budget_limit = "75"
@@ -139,4 +139,20 @@ module "ssm" {
   project_name          = local.project_name
   environment           = var.environment
   vector_store_endpoint = try(module.opensearch[0].collection_endpoint, "")
+}
+
+module "eventbridge" {
+  count                  = var.opensearch_scheduled && var.vector_store_type == "opensearch" ? 1 : 0
+  source                 = "github.com/Yuki670926/rag-portfolio-modules//eventbridge?ref=v1.8.0"
+  project_name           = local.project_name
+  environment            = var.environment
+  collection_name        = "${local.project_name}-collection"
+  ssm_endpoint_param     = "/rp/${var.environment}/vector-store/endpoint"
+  pdf_indexes_table_name = module.dynamodb.pdf_indexes_table_name
+  ingest_lambda_arn      = module.lambda.ingest_lambda_arn
+  ingest_lambda_name     = "${local.project_name}-ingest"
+  documents_bucket_name  = module.s3.documents_bucket_name
+  sns_topic_arn          = ""
+  lambda_role_arn        = module.lambda.lambda_role_arn
+  alert_email            = module.budgets.alert_email
 }

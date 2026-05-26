@@ -19,3 +19,9 @@ variable "vector_store_type" {
   description = "ベクトルストアの種類（opensearch or s3_vectors）"
   default     = "opensearch"
 }
+
+variable "opensearch_scheduled" {
+  type        = bool
+  description = "OpenSearchの自動起動・停止を有効にするか"
+  default     = false
+}
