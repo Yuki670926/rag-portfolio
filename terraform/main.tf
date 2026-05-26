@@ -156,3 +156,24 @@ module "eventbridge" {
   lambda_role_arn        = module.lambda.lambda_role_arn
   alert_email            = module.budgets.alert_email
 }
+
+module "dlq_ingest" {
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  project_name      = local.project_name
+  environment       = var.environment
+  queue_name_suffix = "ingest"
+}
+
+module "dlq_opensearch_start" {
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  project_name      = local.project_name
+  environment       = var.environment
+  queue_name_suffix = "opensearch-start"
+}
+
+module "dlq_opensearch_stop" {
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  project_name      = local.project_name
+  environment       = var.environment
+  queue_name_suffix = "opensearch-stop"
+}
