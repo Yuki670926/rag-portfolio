@@ -55,7 +55,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.7.1"
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.8.4"
   project_name             = local.project_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
   aws_region               = var.aws_region
@@ -144,7 +144,7 @@ module "ssm" {
 
 module "eventbridge" {
   count                  = var.opensearch_scheduled && var.vector_store_type == "opensearch" ? 1 : 0
-  source                 = "github.com/Yuki670926/rag-portfolio-modules//eventbridge?ref=v1.8.3"
+  source                 = "github.com/Yuki670926/rag-portfolio-modules//eventbridge?ref=v1.8.4"
   project_name           = local.project_name
   environment            = var.environment
   collection_name        = "${local.project_name}-collection"
