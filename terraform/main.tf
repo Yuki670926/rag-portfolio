@@ -125,9 +125,10 @@ module "budgets" {
 }
 
 module "cloudwatch" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v1.4.1"
-  project_name = local.project_name
-  aws_region   = var.aws_region
+  source        = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v1.9.2"
+  project_name  = local.project_name
+  aws_region    = var.aws_region
+  sns_topic_arn = try(module.eventbridge[0].sns_topic_arn, "")
 }
 
 module "dynamodb" {
