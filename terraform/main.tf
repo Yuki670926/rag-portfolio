@@ -26,6 +26,20 @@ provider "aws" {
   }
 }
 
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      Project     = "rag-portfolio"
+      Environment = var.environment
+      ManagedBy   = "terraform"
+      Owner       = "Yuki670926"
+    }
+  }
+}
+
 provider "github" {
   owner = "Yuki670926"
 }
@@ -94,11 +108,12 @@ module "api_gateway" {
 }
 
 module "cloudfront" {
-  source                               = "github.com/Yuki670926/rag-portfolio-modules//cloudfront?ref=v1.0.0"
+  source                               = "github.com/Yuki670926/rag-portfolio-modules//cloudfront?ref=v2.0.3"
   project_name                         = local.project_name
   frontend_bucket_id                   = module.s3.frontend_bucket_id
   frontend_bucket_arn                  = module.s3.frontend_bucket_arn
   frontend_bucket_regional_domain_name = module.s3.frontend_bucket_regional_domain_name
+  web_acl_arn                          = module.waf.web_acl_arn
 }
 
 module "github_actions" {
@@ -197,4 +212,13 @@ module "kms" {
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id
+}
+
+module "waf" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//waf?ref=v2.0.3"
+  project_name = local.project_name
+
+  providers = {
+    aws.us_east_1 = aws.us_east_1
+  }
 }
