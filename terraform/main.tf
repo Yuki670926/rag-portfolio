@@ -35,8 +35,9 @@ locals {
 }
 
 module "vpc" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.0.0"
-  project_name = local.project_name
+  source               = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.9.7"
+  project_name         = local.project_name
+  enable_vpc_endpoints = var.enable_vpc_endpoints
 }
 
 module "s3" {
