@@ -55,7 +55,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.8.4"
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.9.3"
   project_name             = local.project_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
   aws_region               = var.aws_region
@@ -69,10 +69,11 @@ module "lambda" {
 }
 
 module "opensearch" {
-  count           = var.vector_store_type == "opensearch" ? 1 : 0
-  source          = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v1.0.0"
-  project_name    = local.project_name
-  lambda_role_arn = module.lambda.lambda_role_arn
+  count                  = var.vector_store_type == "opensearch" ? 1 : 0
+  source                 = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v1.9.3"
+  project_name           = local.project_name
+  ingest_lambda_role_arn = module.lambda.ingest_lambda_role_arn
+  query_lambda_role_arn  = module.lambda.query_lambda_role_arn
 }
 
 module "api_gateway" {
@@ -106,10 +107,10 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.5.1"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.9.3"
   project_name          = local.project_name
-  lambda_role_arn       = module.lambda.lambda_role_arn
   documents_bucket_name = module.s3.documents_bucket_name
+  documents_bucket_arn  = module.s3.documents_bucket_arn
   rest_api_id           = module.api_gateway.rest_api_id
   root_resource_id      = module.api_gateway.root_resource_id
   authorizer_id         = module.api_gateway.authorizer_id
@@ -132,7 +133,7 @@ module "cloudwatch" {
 }
 
 module "dynamodb" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v1.6.1"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v1.9.4"
   project_name = local.project_name
 }
 
@@ -144,23 +145,23 @@ module "ssm" {
 }
 
 module "eventbridge" {
-  count                  = var.opensearch_scheduled && var.vector_store_type == "opensearch" ? 1 : 0
-  source                 = "github.com/Yuki670926/rag-portfolio-modules//eventbridge?ref=v1.8.4"
-  project_name           = local.project_name
-  environment            = var.environment
-  collection_name        = "${local.project_name}-collection"
-  ssm_endpoint_param     = "/rp/${var.environment}/vector-store/endpoint"
-  pdf_indexes_table_name = module.dynamodb.pdf_indexes_table_name
-  ingest_lambda_arn      = module.lambda.ingest_lambda_arn
-  ingest_lambda_name     = "${local.project_name}-ingest"
-  documents_bucket_name  = module.s3.documents_bucket_name
-  sns_topic_arn          = ""
-  lambda_role_arn        = module.lambda.lambda_role_arn
-  alert_email            = module.budgets.alert_email
-  opensearch_start_dlq_arn = module.dlq_opensearch_start.dlq_arn  
-  opensearch_stop_dlq_arn  = module.dlq_opensearch_stop.dlq_arn   
+  count                    = var.opensearch_scheduled && var.vector_store_type == "opensearch" ? 1 : 0
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//eventbridge?ref=v1.9.3"
+  project_name             = local.project_name
+  environment              = var.environment
+  aws_region               = var.aws_region
+  collection_name          = "${local.project_name}-collection"
+  ssm_endpoint_param       = "/rp/${var.environment}/vector-store/endpoint"
+  pdf_indexes_table_name   = module.dynamodb.pdf_indexes_table_name
+  pdf_indexes_table_arn    = module.dynamodb.pdf_indexes_table_arn
+  ingest_lambda_arn        = module.lambda.ingest_lambda_arn
+  ingest_lambda_name       = "${local.project_name}-ingest"
+  documents_bucket_name    = module.s3.documents_bucket_name
+  sns_topic_arn            = ""
+  alert_email              = module.budgets.alert_email
+  opensearch_start_dlq_arn = module.dlq_opensearch_start.dlq_arn
+  opensearch_stop_dlq_arn  = module.dlq_opensearch_stop.dlq_arn
 }
-
 module "dlq_ingest" {
   source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
   project_name      = local.project_name
