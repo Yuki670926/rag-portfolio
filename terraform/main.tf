@@ -81,7 +81,7 @@ module "opensearch" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v1.5.0"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.0.2"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -111,7 +111,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v1.9.3"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.0.2"
   project_name          = local.project_name
   documents_bucket_name = module.s3.documents_bucket_name
   documents_bucket_arn  = module.s3.documents_bucket_arn
@@ -120,6 +120,7 @@ module "presigned_url" {
   authorizer_id         = module.api_gateway.authorizer_id
   execution_arn         = module.api_gateway.execution_arn
   lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
+  cloudfront_domain     = module.cloudfront.distribution_domain_name # 追加
 }
 
 module "budgets" {
