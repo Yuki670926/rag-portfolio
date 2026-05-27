@@ -35,7 +35,7 @@ locals {
 }
 
 module "vpc" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.9.7"
+  source               = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.9.8"
   project_name         = local.project_name
   enable_vpc_endpoints = var.enable_vpc_endpoints
 }
@@ -56,7 +56,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.9.3"
+  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v1.9.8"
   project_name             = local.project_name
   documents_bucket_arn     = module.s3.documents_bucket_arn
   aws_region               = var.aws_region
@@ -66,7 +66,9 @@ module "lambda" {
   sessions_table_name      = module.dynamodb.sessions_table_name
   vector_store_type        = var.vector_store_type
   environment              = var.environment
-  ingest_dlq_arn           = module.dlq_ingest.dlq_arn  # 追加
+  ingest_dlq_arn           = module.dlq_ingest.dlq_arn
+  subnet_ids               = module.vpc.private_subnet_ids        # 追加
+  lambda_security_group_id = module.vpc.lambda_security_group_id # 追加
 }
 
 module "opensearch" {
