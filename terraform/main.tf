@@ -41,11 +41,12 @@ module "vpc" {
 }
 
 module "s3" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v1.6.4"
-  project_name          = local.project_name
-  account_id            = var.account_id
-  ingest_lambda_arn     = module.lambda.ingest_lambda_arn
-  cloudfront_domain     = module.cloudfront.distribution_domain_name
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.0.1"
+  project_name      = local.project_name
+  account_id        = var.account_id
+  ingest_lambda_arn = module.lambda.ingest_lambda_arn
+  cloudfront_domain = module.cloudfront.distribution_domain_name
+  kms_key_arn       = module.kms.s3_kms_key_arn
 }
 
 module "cognito" {
@@ -67,7 +68,7 @@ module "lambda" {
   vector_store_type        = var.vector_store_type
   environment              = var.environment
   ingest_dlq_arn           = module.dlq_ingest.dlq_arn
-  subnet_ids               = module.vpc.private_subnet_ids        # 追加
+  subnet_ids               = module.vpc.private_subnet_ids       # 追加
   lambda_security_group_id = module.vpc.lambda_security_group_id # 追加
 }
 
@@ -136,8 +137,9 @@ module "cloudwatch" {
 }
 
 module "dynamodb" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v1.9.4"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v2.0.1"
   project_name = local.project_name
+  kms_key_arn  = module.kms.s3_kms_key_arn
 }
 
 module "ssm" {
@@ -166,22 +168,32 @@ module "eventbridge" {
   opensearch_stop_dlq_arn  = module.dlq_opensearch_stop.dlq_arn
 }
 module "dlq_ingest" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v2.0.1"
   project_name      = local.project_name
   environment       = var.environment
   queue_name_suffix = "ingest"
+  kms_key_arn       = module.kms.sqs_kms_key_arn
 }
 
 module "dlq_opensearch_start" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v2.0.1"
   project_name      = local.project_name
   environment       = var.environment
   queue_name_suffix = "opensearch-start"
+  kms_key_arn       = module.kms.sqs_kms_key_arn
 }
 
 module "dlq_opensearch_stop" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v1.9.1"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//dlq?ref=v2.0.1"
   project_name      = local.project_name
   environment       = var.environment
   queue_name_suffix = "opensearch-stop"
+  kms_key_arn       = module.kms.sqs_kms_key_arn
+}
+
+module "kms" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.0.0"
+  project_name = local.project_name
+  aws_region   = var.aws_region
+  account_id   = var.account_id
 }
