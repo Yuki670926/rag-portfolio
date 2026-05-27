@@ -208,7 +208,7 @@ module "dlq_opensearch_stop" {
 }
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.0.0"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.0.5"
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id
@@ -221,4 +221,12 @@ module "waf" {
   providers = {
     aws.us_east_1 = aws.us_east_1
   }
+}
+
+module "cloudtrail" {
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudtrail?ref=v2.0.5"
+  project_name = local.project_name
+  account_id   = var.account_id
+  aws_region   = var.aws_region
+  kms_key_arn  = module.kms.cloudtrail_kms_key_arn
 }
