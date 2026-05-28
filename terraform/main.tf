@@ -135,11 +135,11 @@ module "presigned_url" {
   authorizer_id         = module.api_gateway.authorizer_id
   execution_arn         = module.api_gateway.execution_arn
   lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
-  cloudfront_domain     = module.cloudfront.distribution_domain_name # 追加
+  cloudfront_domain     = module.cloudfront.distribution_domain_name
 }
 
 module "budgets" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v1.8.2"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//budgets?ref=v2.0.8"
   project_name = local.project_name
   environment  = var.environment
   budget_limit = "75"
