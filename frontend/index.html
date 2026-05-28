@@ -129,13 +129,23 @@
 </div>
 
 <script>
-  const CONFIG = {
-  API_URL: "https://7kh3288t45.execute-api.ap-northeast-1.amazonaws.com/prod",
-  USER_POOL_ID: "ap-northeast-1_6CVUmhDmZ",
-  CLIENT_ID: "17cn3qhuujqo5tf0k0jgv3dhrv",
-  REGION: "ap-northeast-1",
-  DOCUMENTS_BUCKET: "rp-dev-documents-086769945521"
-};
+  let CONFIG = {};
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/config.json');
+    CONFIG = await res.json();
+  } catch (e) {
+    console.error('設定ファイルの読み込みに失敗しました:', e);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  const loginBtn = document.querySelector('.auth-card button');
+  loginBtn.disabled = true;
+  await loadConfig();
+  loginBtn.disabled = false;
+});
 
   let idToken = null;
   let currentUser = null;
