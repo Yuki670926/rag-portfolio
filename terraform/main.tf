@@ -55,12 +55,16 @@ module "vpc" {
 }
 
 module "s3" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.0.1"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.1.1"
   project_name      = local.project_name
   account_id        = var.account_id
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
   cloudfront_domain = module.cloudfront.distribution_domain_name
   kms_key_arn       = module.kms.s3_kms_key_arn
+  api_url           = module.api_gateway.api_url
+  user_pool_id      = module.cognito.user_pool_id
+  client_id         = module.cognito.user_pool_client_id
+  aws_region        = var.aws_region
 }
 
 module "cognito" {
@@ -95,7 +99,7 @@ module "opensearch" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.0.2"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.1.0"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -105,6 +109,7 @@ module "api_gateway" {
   cognito_client_id            = module.cognito.user_pool_client_id
   authorizer_lambda_invoke_arn = module.lambda.authorizer_lambda_invoke_arn
   authorizer_lambda_arn        = module.lambda.authorizer_lambda_arn
+  stage_name                   = var.environment
 }
 
 module "cloudfront" {
