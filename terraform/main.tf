@@ -55,7 +55,7 @@ module "vpc" {
 }
 
 module "s3" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.1.1"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.1.3"
   project_name      = local.project_name
   account_id        = var.account_id
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
