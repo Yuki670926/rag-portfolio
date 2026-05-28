@@ -25,3 +25,9 @@ variable "opensearch_scheduled" {
   description = "OpenSearchの自動起動・停止を有効にするか"
   default     = false
 }
+
+variable "enable_vpc_endpoints" {
+  type        = bool
+  description = "インターフェース型VPCエンドポイントを作成するか"
+  default     = false
+}
