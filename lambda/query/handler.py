@@ -4,6 +4,12 @@ import boto3
 from datetime import datetime, timezone, timedelta
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
+
+logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
@@ -29,7 +35,7 @@ def get_vector_store_endpoint():
         )
         return response["Parameter"]["Value"]
     except Exception as e:
-        print(f"SSM error: {str(e)}")
+        logger.error(f"SSM error: {str(e)}")
         return ""
 
 def get_aws_auth():
@@ -81,10 +87,10 @@ def search_documents(query_embedding):
             response = client.search(index=INDEX_NAME, body=query)
             return [hit["_source"] for hit in response["hits"]["hits"]]
         except Exception as e:
-            print(f"OpenSearch error: {str(e)}")
+            logger.error(f"OpenSearch error: {str(e)}")
             return []
     elif VECTOR_STORE_TYPE == "s3_vectors":
-        print("S3 Vectors is not implemented yet")
+        logger.info("S3 Vectors is not implemented yet")
         return []
     return []
     
@@ -103,7 +109,7 @@ def get_session_id(user_id):
             return items[0]["session_id"]
         return None
     except Exception as e:
-        print(f"DynamoDB session error: {str(e)}")
+        logger.error(f"DynamoDB session error: {str(e)}")
         return None
 
 def get_conversation_history(user_id, session_id):
@@ -122,7 +128,7 @@ def get_conversation_history(user_id, session_id):
         items.reverse()
         return items
     except Exception as e:
-        print(f"DynamoDB history error: {str(e)}")
+        logger.error(f"DynamoDB history error: {str(e)}")
         return []
 
 def save_conversation(user_id, session_id, question, answer):
@@ -139,7 +145,7 @@ def save_conversation(user_id, session_id, question, answer):
             "ttl": ttl
         })
     except Exception as e:
-        print(f"DynamoDB save error: {str(e)}")
+        logger.error(f"DynamoDB save error: {str(e)}")
 
 def save_session(user_id, session_id):
     try:
@@ -153,7 +159,7 @@ def save_session(user_id, session_id):
             "ttl": ttl
         })
     except Exception as e:
-        print(f"DynamoDB session save error: {str(e)}")
+        logger.error(f"DynamoDB session save error: {str(e)}")
 
 def generate_answer(question, contexts, history):
     context_text = "\n\n".join([
@@ -199,6 +205,9 @@ def generate_answer(question, contexts, history):
     body = json.loads(response["body"].read())
     return body["content"][0]["text"]
 
+@logger.inject_lambda_context
+@tracer.capture_lambda_handler
+@metrics.log_metrics
 def handler(event, context):
     try:
         body = json.loads(event.get("body", "{}"))
@@ -242,7 +251,7 @@ def handler(event, context):
             }, ensure_ascii=False)
         }
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         return {
             "statusCode": 500,
             "headers": {"Access-Control-Allow-Origin": "*"},
