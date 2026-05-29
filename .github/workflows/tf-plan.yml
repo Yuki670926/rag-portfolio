@@ -30,7 +30,24 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.5.0
+          terraform_version: 1.15.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov
+        run: |
+          checkov -d terraform \
+            --framework terraform \
+            --soft-fail \
+            --output cli \
+            --quiet
+        continue-on-error: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -50,9 +67,9 @@ jobs:
         continue-on-error: true
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend-config="environments/dev-backend.hcl" -reconfigure
         working-directory: terraform
 
       - name: Terraform Plan
-        run: terraform plan -no-color
+        run: terraform plan -no-color -var-file="environments/dev.tfvars"
         working-directory: terraform
