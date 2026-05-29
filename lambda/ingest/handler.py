@@ -6,6 +6,12 @@ from pypdf import PdfReader
 from io import BytesIO
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from requests_aws4auth import AWS4Auth
+from aws_lambda_powertools import Logger, Tracer, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
+
+logger = Logger()
+tracer = Tracer()
+metrics = Metrics()
 
 s3_client = boto3.client("s3")
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
@@ -27,7 +33,7 @@ def get_vector_store_endpoint():
         )
         return response["Parameter"]["Value"]
     except Exception as e:
-        print(f"SSM error: {str(e)}")
+        logger.error(f"SSM error: {str(e)}")
         return ""
 
 def get_aws_auth():
@@ -69,7 +75,7 @@ def ensure_index(client):
                 }
             }
         )
-        print(f"Index {INDEX_NAME} created")
+        logger.info(f"Index {INDEX_NAME} created")
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()
@@ -88,25 +94,28 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
+@logger.inject_lambda_context
+@tracer.capture_lambda_handler
+@metrics.log_metrics
 def handler(event, context):
     if VECTOR_STORE_TYPE == "opensearch":
         endpoint = get_vector_store_endpoint()
         if not endpoint:
-            print("OpenSearch endpoint not found in SSM")
+            logger.error("OpenSearch endpoint not found in SSM")
             return {"statusCode": 500, "body": "OpenSearch endpoint not configured"}
         os_client = get_opensearch_client(endpoint)
     elif VECTOR_STORE_TYPE == "s3_vectors":
         # S3 Vectors実装予定（17番）
-        print("S3 Vectors is not implemented yet")
+        logger.info("S3 Vectors not implemented yet")
         return {"statusCode": 200, "body": "S3 Vectors not implemented"}
     else:
-        print(f"Unknown vector store type: {VECTOR_STORE_TYPE}")
+        logger.error(f"Unknown vector store type: {VECTOR_STORE_TYPE}")
         return {"statusCode": 500, "body": "Unknown vector store type"}
 
     for record in event["Records"]:
         bucket = record["s3"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
-        print(f"Processing: s3://{bucket}/{key}")
+        logger.info(f"Processing: s3://{bucket}/{key}")
 
         response = s3_client.get_object(Bucket=bucket, Key=key)
         pdf_bytes = response["Body"].read()
@@ -116,7 +125,7 @@ def handler(event, context):
             full_text += page.extract_text() + "\n"
 
         chunks = chunk_text(full_text)
-        print(f"Total chunks: {len(chunks)}")
+        logger.info(f"Total chunks: {len(chunks)}")
 
         ensure_index(os_client)
         for i, chunk in enumerate(chunks):
@@ -128,6 +137,7 @@ def handler(event, context):
                 "chunk_index": i
             }
             os_client.index(index=INDEX_NAME, body=doc)
-            print(f"Indexed chunk {i}: {chunk[:50]}...")
+            logger.info(f"Indexed chunk {i}: {chunk[:50]}...")
 
     return {"statusCode": 200, "body": "Ingestion complete"}
+
