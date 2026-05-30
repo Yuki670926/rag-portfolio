@@ -98,6 +98,25 @@ module "opensearch" {
   query_lambda_role_arn  = module.lambda.query_lambda_role_arn
 }
 
+module "s3_vectors" {
+  count        = var.vector_store_type == "s3_vectors" ? 1 : 0
+  source       = "github.com/Yuki670926/rag-portfolio-modules//s3_vectors?ref=v2.2.1"
+  project_name = local.project_name
+  kms_key_arn  = module.kms.s3_kms_key_arn
+}
+
+module "knowledge_base" {
+  count                = var.vector_store_type == "s3_vectors" ? 1 : 0
+  source               = "github.com/Yuki670926/rag-portfolio-modules//knowledge_base?ref=v2.2.1"
+  project_name         = local.project_name
+  account_id           = var.account_id
+  aws_region           = var.aws_region
+  documents_bucket_arn = module.s3.documents_bucket_arn
+  vector_bucket_arn    = module.s3_vectors[0].vector_bucket_arn
+  vector_index_arn     = module.s3_vectors[0].vector_index_arn
+  kms_key_arn          = module.kms.s3_kms_key_arn
+}
+
 module "api_gateway" {
   source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.1.1"
   project_name                 = local.project_name
