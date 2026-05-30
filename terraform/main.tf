@@ -107,7 +107,7 @@ module "s3_vectors" {
 
 module "knowledge_base" {
   count                = var.vector_store_type == "s3_vectors" ? 1 : 0
-  source               = "github.com/Yuki670926/rag-portfolio-modules//knowledge_base?ref=v2.2.1"
+  source               = "github.com/Yuki670926/rag-portfolio-modules//knowledge_base?ref=v2.2.2"
   project_name         = local.project_name
   account_id           = var.account_id
   aws_region           = var.aws_region
@@ -232,7 +232,7 @@ module "dlq_opensearch_stop" {
 }
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.0.5"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.2"
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id
