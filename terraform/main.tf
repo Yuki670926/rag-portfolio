@@ -5,10 +5,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.27"
     }
-    github = {
-      source  = "integrations/github"
-      version = ">= 5.0"
-    }
   }
   backend "s3" {}
 }
@@ -38,10 +34,6 @@ provider "aws" {
       Owner       = "Yuki670926"
     }
   }
-}
-
-provider "github" {
-  owner = "Yuki670926"
 }
 
 locals {
@@ -123,7 +115,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.1.1"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.8"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -146,12 +138,10 @@ module "cloudfront" {
 }
 
 module "github_actions" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.1.4"
-  project_name         = local.project_name
-  github_username      = "Yuki670926"
-  github_repo          = "rag-portfolio"
-  frontend_bucket_name = module.s3.frontend_bucket_name
-  cf_distribution_id   = module.cloudfront.distribution_id
+  source          = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.2.9"
+  project_name    = local.project_name
+  github_username = "Yuki670926"
+  github_repo     = "rag-portfolio"
 }
 
 module "presigned_url" {
@@ -175,10 +165,10 @@ module "budgets" {
 }
 
 module "cloudwatch" {
-  source        = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v1.9.2"
-  project_name  = local.project_name
-  aws_region    = var.aws_region
-  sns_topic_arn = try(module.eventbridge[0].sns_topic_arn, "")
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v2.2.7"
+  project_name = local.project_name
+  aws_region   = var.aws_region
+  alert_email  = module.budgets.alert_email
 }
 
 module "dynamodb" {
