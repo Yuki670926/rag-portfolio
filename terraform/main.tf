@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.50"
+      version = "~> 6.27"
     }
     github = {
       source  = "integrations/github"
@@ -49,9 +49,9 @@ locals {
 }
 
 module "vpc" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.9.8"
-  project_name         = local.project_name
-  enable_vpc_endpoints = var.enable_vpc_endpoints
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.4"
+  project_name              = local.project_name
+  enable_private_networking = var.enable_private_networking
 }
 
 module "s3" {
@@ -75,19 +75,24 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.1.7"
-  project_name             = local.project_name
-  documents_bucket_arn     = module.s3.documents_bucket_arn
-  aws_region               = var.aws_region
-  cognito_user_pool_id     = module.cognito.user_pool_id
-  cognito_client_id        = module.cognito.user_pool_client_id
-  conversations_table_name = module.dynamodb.conversations_table_name
-  sessions_table_name      = module.dynamodb.sessions_table_name
-  vector_store_type        = var.vector_store_type
-  environment              = var.environment
-  ingest_dlq_arn           = module.dlq_ingest.dlq_arn
-  subnet_ids               = module.vpc.private_subnet_ids       # 追加
-  lambda_security_group_id = module.vpc.lambda_security_group_id # 追加
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.5"
+  project_name              = local.project_name
+  documents_bucket_arn      = module.s3.documents_bucket_arn
+  aws_region                = var.aws_region
+  cognito_user_pool_id      = module.cognito.user_pool_id
+  cognito_client_id         = module.cognito.user_pool_client_id
+  conversations_table_name  = module.dynamodb.conversations_table_name
+  sessions_table_name       = module.dynamodb.sessions_table_name
+  vector_store_type         = var.vector_store_type
+  environment               = var.environment
+  ingest_dlq_arn            = module.dlq_ingest.dlq_arn
+  subnet_ids                = module.vpc.private_subnet_ids
+  lambda_security_group_id  = module.vpc.lambda_security_group_id
+  knowledge_base_id         = try(module.knowledge_base[0].knowledge_base_id, "")
+  data_source_id            = try(module.knowledge_base[0].data_source_id, "")
+  knowledge_base_arn        = try(module.knowledge_base[0].knowledge_base_arn, "*")
+  enable_private_networking = var.enable_private_networking
+  kms_key_arn               = module.kms.s3_kms_key_arn
 }
 
 module "opensearch" {
@@ -96,6 +101,25 @@ module "opensearch" {
   project_name           = local.project_name
   ingest_lambda_role_arn = module.lambda.ingest_lambda_role_arn
   query_lambda_role_arn  = module.lambda.query_lambda_role_arn
+}
+
+module "s3_vectors" {
+  count        = var.vector_store_type == "s3_vectors" ? 1 : 0
+  source       = "github.com/Yuki670926/rag-portfolio-modules//s3_vectors?ref=v2.2.1"
+  project_name = local.project_name
+  kms_key_arn  = module.kms.s3_kms_key_arn
+}
+
+module "knowledge_base" {
+  count                = var.vector_store_type == "s3_vectors" ? 1 : 0
+  source               = "github.com/Yuki670926/rag-portfolio-modules//knowledge_base?ref=v2.2.2"
+  project_name         = local.project_name
+  account_id           = var.account_id
+  aws_region           = var.aws_region
+  documents_bucket_arn = module.s3.documents_bucket_arn
+  vector_bucket_arn    = module.s3_vectors[0].vector_bucket_arn
+  vector_index_arn     = module.s3_vectors[0].vector_index_arn
+  kms_key_arn          = module.kms.s3_kms_key_arn
 }
 
 module "api_gateway" {
@@ -164,10 +188,11 @@ module "dynamodb" {
 }
 
 module "ssm" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v1.6.8"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v2.2.6"
   project_name          = local.project_name
   environment           = var.environment
   vector_store_endpoint = try(module.opensearch[0].collection_endpoint, "")
+  vector_store_type     = var.vector_store_type
 }
 
 module "eventbridge" {
@@ -213,7 +238,7 @@ module "dlq_opensearch_stop" {
 }
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.0.5"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.2"
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id

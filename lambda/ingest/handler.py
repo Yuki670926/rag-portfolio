@@ -15,9 +15,12 @@ metrics = Metrics()
 
 s3_client = boto3.client("s3")
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
+bedrock_agent_client = boto3.client("bedrock-agent", region_name="ap-northeast-1")
 ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
 
 VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
+DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
 SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
 INDEX_NAME = "documents"
 CHUNK_SIZE = 500
@@ -94,6 +97,29 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
+def start_kb_ingestion():
+    """Bedrock Knowledge Base のデータ取り込みジョブを開始する（非同期）。
+    KBがS3からPDFを読み、チャンキング・埋め込み・S3 Vectors投入を実行する。
+    ジョブの完了は待たない（fire-and-forget）。"""
+    if not KNOWLEDGE_BASE_ID or not DATA_SOURCE_ID:
+        logger.error("KNOWLEDGE_BASE_ID / DATA_SOURCE_ID not configured")
+        return {"statusCode": 500, "body": "KB IDs not configured"}
+
+    try:
+        response = bedrock_agent_client.start_ingestion_job(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            dataSourceId=DATA_SOURCE_ID,
+        )
+        job_id = response["ingestionJob"]["ingestionJobId"]
+        logger.info(f"Started KB ingestion job: {job_id}")
+        metrics.add_metric(name="KBIngestionStarted", unit=MetricUnit.Count, value=1)
+        return {"statusCode": 200, "body": f"Ingestion job started: {job_id}"}
+    except bedrock_agent_client.exceptions.ConflictException:
+        # 既に同期ジョブが実行中。fire-and-forget方針のため、
+        # 次回アップロードまたは手動同期で取り込まれるので警告ログのみ。
+        logger.warning("Ingestion job already in progress; skipping this trigger")
+        return {"statusCode": 200, "body": "Ingestion already in progress"}
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics
@@ -105,9 +131,9 @@ def handler(event, context):
             return {"statusCode": 500, "body": "OpenSearch endpoint not configured"}
         os_client = get_opensearch_client(endpoint)
     elif VECTOR_STORE_TYPE == "s3_vectors":
-        # S3 Vectors実装予定（17番）
-        logger.info("S3 Vectors not implemented yet")
-        return {"statusCode": 200, "body": "S3 Vectors not implemented"}
+        # S3 Vectors + Bedrock KB: KBが取り込みを行うため、同期ジョブを開始するだけ。
+        # PDF抽出・チャンク・埋め込み・投入はKBが実行する（自前パイプライン不要）。
+        return start_kb_ingestion()
     else:
         logger.error(f"Unknown vector store type: {VECTOR_STORE_TYPE}")
         return {"statusCode": 500, "body": "Unknown vector store type"}
