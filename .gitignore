@@ -121,3 +121,8 @@ __pycache__/
 # Terraform test artifacts
 terraform/payload.json
 terraform/response.json
+
+# Terraform state backups
+*.tfstate
+*.tfstate.*
+backup_state_*.json
