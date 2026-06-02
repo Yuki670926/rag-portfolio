@@ -49,9 +49,9 @@ locals {
 }
 
 module "vpc" {
-  source               = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v1.9.8"
-  project_name         = local.project_name
-  enable_vpc_endpoints = var.enable_vpc_endpoints
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.4"
+  project_name              = local.project_name
+  enable_private_networking = var.enable_private_networking
 }
 
 module "s3" {
@@ -75,22 +75,24 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                   = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.3"
-  project_name             = local.project_name
-  documents_bucket_arn     = module.s3.documents_bucket_arn
-  aws_region               = var.aws_region
-  cognito_user_pool_id     = module.cognito.user_pool_id
-  cognito_client_id        = module.cognito.user_pool_client_id
-  conversations_table_name = module.dynamodb.conversations_table_name
-  sessions_table_name      = module.dynamodb.sessions_table_name
-  vector_store_type        = var.vector_store_type
-  environment              = var.environment
-  ingest_dlq_arn           = module.dlq_ingest.dlq_arn
-  subnet_ids               = module.vpc.private_subnet_ids
-  lambda_security_group_id = module.vpc.lambda_security_group_id
-  knowledge_base_id        = try(module.knowledge_base[0].knowledge_base_id, "")
-  data_source_id           = try(module.knowledge_base[0].data_source_id, "")
-  knowledge_base_arn       = try(module.knowledge_base[0].knowledge_base_arn, "*")
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.5"
+  project_name              = local.project_name
+  documents_bucket_arn      = module.s3.documents_bucket_arn
+  aws_region                = var.aws_region
+  cognito_user_pool_id      = module.cognito.user_pool_id
+  cognito_client_id         = module.cognito.user_pool_client_id
+  conversations_table_name  = module.dynamodb.conversations_table_name
+  sessions_table_name       = module.dynamodb.sessions_table_name
+  vector_store_type         = var.vector_store_type
+  environment               = var.environment
+  ingest_dlq_arn            = module.dlq_ingest.dlq_arn
+  subnet_ids                = module.vpc.private_subnet_ids
+  lambda_security_group_id  = module.vpc.lambda_security_group_id
+  knowledge_base_id         = try(module.knowledge_base[0].knowledge_base_id, "")
+  data_source_id            = try(module.knowledge_base[0].data_source_id, "")
+  knowledge_base_arn        = try(module.knowledge_base[0].knowledge_base_arn, "*")
+  enable_private_networking = var.enable_private_networking
+  kms_key_arn               = module.kms.s3_kms_key_arn
 }
 
 module "opensearch" {
@@ -186,10 +188,11 @@ module "dynamodb" {
 }
 
 module "ssm" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v1.6.8"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v2.2.6"
   project_name          = local.project_name
   environment           = var.environment
   vector_store_endpoint = try(module.opensearch[0].collection_endpoint, "")
+  vector_store_type     = var.vector_store_type
 }
 
 module "eventbridge" {
