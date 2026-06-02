@@ -138,10 +138,13 @@ module "cloudfront" {
 }
 
 module "github_actions" {
-  source          = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.2.9"
-  project_name    = local.project_name
-  github_username = "Yuki670926"
-  github_repo     = "rag-portfolio"
+  source                      = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.2.10"
+  project_name                = local.project_name
+  github_username             = "Yuki670926"
+  github_repo                 = "rag-portfolio"
+  frontend_bucket_arn         = module.s3.frontend_bucket_arn
+  s3_kms_key_arn              = module.kms.s3_kms_key_arn
+  cloudfront_distribution_arn = "arn:aws:cloudfront::${var.account_id}:distribution/${module.cloudfront.distribution_id}"
 }
 
 module "presigned_url" {
