@@ -123,7 +123,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.1.1"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.8"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -175,10 +175,10 @@ module "budgets" {
 }
 
 module "cloudwatch" {
-  source        = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v1.9.2"
-  project_name  = local.project_name
-  aws_region    = var.aws_region
-  sns_topic_arn = try(module.eventbridge[0].sns_topic_arn, "")
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v2.2.7"
+  project_name = local.project_name
+  aws_region   = var.aws_region
+  alert_email  = module.budgets.alert_email
 }
 
 module "dynamodb" {
