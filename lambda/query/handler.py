@@ -12,10 +12,12 @@ tracer = Tracer()
 metrics = Metrics()
 
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name="ap-northeast-1")
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
 ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
 
 VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
 CONVERSATIONS_TABLE = os.environ.get("CONVERSATIONS_TABLE", "")
 SESSIONS_TABLE = os.environ.get("SESSIONS_TABLE", "")
@@ -66,12 +68,14 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
-def search_documents(query_embedding):
+def search_documents(question):
     if VECTOR_STORE_TYPE == "opensearch":
         endpoint = get_vector_store_endpoint()
         if not endpoint:
             return []
         try:
+            # OpenSearchはLambda側で埋め込みを作ってknn検索する
+            query_embedding = get_embedding(question)
             client = get_opensearch_client(endpoint)
             query = {
                 "size": TOP_K,
@@ -90,8 +94,32 @@ def search_documents(query_embedding):
             logger.error(f"OpenSearch error: {str(e)}")
             return []
     elif VECTOR_STORE_TYPE == "s3_vectors":
-        logger.info("S3 Vectors is not implemented yet")
-        return []
+        # Bedrock KB の Retrieve: テキストを渡すだけ。
+        # 埋め込み生成・ベクトル検索はKBが実行する（Lambdaは検索結果を受け取るのみ）。
+        if not KNOWLEDGE_BASE_ID:
+            logger.error("KNOWLEDGE_BASE_ID not configured")
+            return []
+        try:
+            response = bedrock_agent_runtime.retrieve(
+                knowledgeBaseId=KNOWLEDGE_BASE_ID,
+                retrievalQuery={"text": question},
+                retrievalConfiguration={
+                    "vectorSearchConfiguration": {"numberOfResults": TOP_K}
+                },
+            )
+            # KBの結果を既存のcontexts形式(text/source)に整形する
+            results = []
+            for item in response.get("retrievalResults", []):
+                results.append({
+                    "text": item.get("content", {}).get("text", ""),
+                    "source": item.get("location", {})
+                                  .get("s3Location", {})
+                                  .get("uri", "unknown"),
+                })
+            return results
+        except Exception as e:
+            logger.error(f"KB Retrieve error: {str(e)}")
+            return []
     return []
     
 
@@ -231,8 +259,7 @@ def handler(event, context):
         history = get_conversation_history(user_id, session_id)
 
         # RAG検索
-        query_embedding = get_embedding(question)
-        contexts = search_documents(query_embedding)
+        contexts = search_documents(question)
 
         # 回答生成
         answer = generate_answer(question, contexts, history)

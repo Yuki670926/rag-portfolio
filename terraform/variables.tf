@@ -1,4 +1,4 @@
-﻿variable "environment" {
+variable "environment" {
   type        = string
   description = "環境名（dev / stag / prod）"
 }
@@ -26,8 +26,8 @@ variable "opensearch_scheduled" {
   default     = false
 }
 
-variable "enable_vpc_endpoints" {
+variable "enable_private_networking" {
   type        = bool
-  description = "インターフェース型VPCエンドポイントを作成するか"
+  description = "プライベートネットワーキングを有効化するか（LambdaのVPC配置＋VPCエンドポイント経由のプライベート通信。層3の経路隔離）"
   default     = false
 }

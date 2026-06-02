@@ -113,3 +113,11 @@ lambda/authorizer/*.egg-info/
 lambda/authorizer/six.py
 lambda/authorizer/*.pyd
 lambda/authorizer/*.so
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Terraform test artifacts
+terraform/payload.json
+terraform/response.json
