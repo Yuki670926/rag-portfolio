@@ -1,15 +1,13 @@
 name: Terraform Plan
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   pull_request:
     branches:
       - main
+      - develop
     paths:
       - "terraform/**"
-
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -17,29 +15,23 @@ jobs:
       id-token: write
       contents: read
       pull-requests: write
-
     steps:
       - uses: actions/checkout@v4.2.2
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-1
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.2
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install Checkov
         run: pip install checkov
-
       - name: Run Checkov
         run: |
           checkov -d terraform \
@@ -48,11 +40,14 @@ jobs:
             --output cli \
             --quiet
         continue-on-error: true
-
+      - name: Restore dev.tfvars from secret
+        run: |
+          cat > terraform/environments/dev.tfvars << 'EOF'
+          ${{ secrets.DEV_TFVARS }}
+          EOF
       - name: Terraform Init
         run: terraform init -backend-config="environments/dev-backend.hcl" -reconfigure
         working-directory: terraform
-
       - name: Terraform Plan
         run: terraform plan -no-color -var-file="environments/dev.tfvars"
         working-directory: terraform
