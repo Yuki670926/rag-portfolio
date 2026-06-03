@@ -133,3 +133,8 @@ layers/*/build/
 # Lambda Layer build artifacts
 layers/*/build/
 layers/*/*.zip
+
+# Lambda function build artifacts (deps now in layers)
+lambda/*/__pycache__/
+lambda/**/*.pyd
+lambda/**/*.pyc
