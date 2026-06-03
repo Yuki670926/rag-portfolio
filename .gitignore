@@ -126,3 +126,10 @@ terraform/response.json
 *.tfstate
 *.tfstate.*
 backup_state_*.json
+
+# Lambda Layer build artifacts (built via docker, not committed)
+layers/*/build/
+
+# Lambda Layer build artifacts
+layers/*/build/
+layers/*/*.zip
