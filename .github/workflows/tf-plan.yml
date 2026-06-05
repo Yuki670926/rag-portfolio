@@ -10,8 +10,11 @@ on:
 
 jobs:
   plan:
-    uses: ./.github/workflows/_terraform.yml   # モジュール本体を呼ぶ
+    permissions:          # ← 追加：OIDC 権限は呼び出し側で付与
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/_terraform.yml
     with:
-      environment: dev      # ← dev の Environment（その secret が使われる）
+      environment: dev
       command: plan
-    secrets: inherit        # ← 呼び出し元の secret をモジュールへ通す（Environment secret もこれで届く）
+    secrets: inherit

@@ -1,12 +1,15 @@
 name: Terraform Apply
 
 on:
-  workflow_dispatch:        # 手動ボタンで起動
+  workflow_dispatch:
 
 jobs:
   apply:
-    uses: ./.github/workflows/_terraform.yml   # モジュール本体を呼ぶ
+    permissions:          # ← 追加
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/_terraform.yml
     with:
-      environment: dev      # ← dev の Environment（その secret が使われる）
+      environment: dev
       command: apply
-    secrets: inherit        # ← Environment secret をモジュールへ通す
+    secrets: inherit
