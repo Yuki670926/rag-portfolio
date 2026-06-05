@@ -34,12 +34,10 @@ jobs:
         with:
           terraform_version: 1.15.2
 
-      - name: Build Lambda layers          # build/ は未コミットなので CI で Docker ビルドして生成
+      - name: Build Lambda layers          # build/ は未コミットなので CI で Docker ビルド。再現性(no-compile/mtime固定)はスクリプト内で担保
         run: |
           bash scripts/build-layer.sh authorizer
           bash scripts/build-layer.sh ingest-query
-          # 再現性確保：pip が付ける mtime がビルド毎に変わり archive_file の hash が変動するため固定
-          find layers/*/build -exec touch -t 200001010000 {} +
 
       - name: Restore tfvars from secret
         run: |
