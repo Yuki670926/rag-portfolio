@@ -4,8 +4,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  workflow_call:          # 「呼ばれて動く」という宣言
-    inputs:               # ← Terraform モジュールの variable に相当
+  workflow_call:
+    inputs:
       environment:
         required: true
         type: string      # dev / stg / prod
@@ -16,9 +16,9 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}   # ← この1行が肝。指定した Environment の secret（AWS_ROLE_ARN / TFVARS）が使われる
+    environment: ${{ inputs.environment }}   # この Environment の secret（AWS_ROLE_ARN / TFVARS）が使われる
     permissions:
-      id-token: write      # OIDC で AWS にログインするのに必須
+      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4.2.2
@@ -26,13 +26,18 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}   # その環境の Environment secret
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.2
+
+      - name: Build Lambda layers          # ← 追加：build/ は未コミットなので CI で Docker ビルドして生成
+        run: |
+          bash scripts/build-layer.sh authorizer
+          bash scripts/build-layer.sh ingest-query
 
       - name: Restore tfvars from secret
         run: |
