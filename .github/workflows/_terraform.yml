@@ -34,10 +34,20 @@ jobs:
         with:
           terraform_version: 1.15.2
 
-      - name: Build Lambda layers          # build/ は未コミットなので CI で Docker ビルド。再現性(no-compile/mtime固定)はスクリプト内で担保
+      - name: Build Lambda layers          # build/ は未コミットなので CI で Docker ビルド。再現性(no-compile/mtime固定)はスクリプト内
         run: |
           bash scripts/build-layer.sh authorizer
           bash scripts/build-layer.sh ingest-query
+
+      - name: Checkov IaC scan             # plan 時のみ。非ブロッキングのアドバイザリ（findings/エラーで plan を止めない）
+        if: inputs.command == 'plan'
+        continue-on-error: true
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          download_external_modules: true
+          soft_fail: true
+          quiet: true
 
       - name: Restore tfvars from secret
         run: |
