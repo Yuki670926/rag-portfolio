@@ -138,3 +138,8 @@ layers/*/*.zip
 lambda/*/__pycache__/
 lambda/**/*.pyd
 lambda/**/*.pyc
+
+# local artifacts (never commit)
+terraform/plan.txt
+terraform/tfplan
+terraform/secret.json
