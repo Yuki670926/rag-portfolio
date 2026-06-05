@@ -9,10 +9,11 @@
 # Terraform (source_dir = layers/<name>/build) has the required python/ top
 # level directory. The build/ dir is gitignored (build artifacts not committed).
 #
-# NOTE: the clean step runs inside Docker too. Files created by the previous
-# build are owned by the container's root user, so removing them from a
-# Windows/WSL host directly fails with "Permission denied". Cleaning inside the
-# same image avoids that ownership mismatch.
+# Reproducibility: pip runs with --no-compile (no .pyc, which embed source
+# mtimes and break byte-reproducibility) and every build file is touched to a
+# fixed mtime. Both run as ROOT INSIDE the container, so there is no host-side
+# ownership/permission problem (files created by the container are root-owned,
+# so a host-side touch would fail with "Permission denied").
 #
 # Usage:
 #   ./build-layer.sh <layer-name>
@@ -22,32 +23,31 @@
 # Requirements:
 #   - Docker running
 #   - layers/<layer-name>/requirements.txt exists
-
 set -euo pipefail
-
 LAYER_NAME="${1:?Usage: ./build-layer.sh <layer-name>}"
 LAYER_DIR="layers/${LAYER_NAME}"
 BUILD_DIR="${LAYER_DIR}/build/python"
 PYTHON_RUNTIME="public.ecr.aws/lambda/python:3.12"
-
 if [ ! -f "${LAYER_DIR}/requirements.txt" ]; then
   echo "ERROR: ${LAYER_DIR}/requirements.txt not found" >&2
   exit 1
 fi
-
 echo "==> Building layer '${LAYER_NAME}' (${PYTHON_RUNTIME})"
-
-# Clean previous build inside Docker (root) to avoid host-side permission errors,
-# then pip install. -t build/python keeps the python/ layout Lambda expects.
+# All steps run inside Docker (root) for Lambda-compatible binaries AND to avoid
+# host-side ownership errors when normalizing the build:
+#   1. clean previous build
+#   2. pip install with --no-compile (no .pyc -> reproducible)
+#   3. defensively drop any __pycache__
+#   4. pin every file's mtime so archive_file produces a stable hash
 docker run --rm \
   --entrypoint /bin/bash \
   -v "$(pwd)/${LAYER_DIR}:/var/task" \
   "${PYTHON_RUNTIME}" \
   -c "rm -rf /var/task/build && \
-      pip install -r /var/task/requirements.txt -t /var/task/build/python --no-cache-dir && \
+      pip install -r /var/task/requirements.txt -t /var/task/build/python --no-cache-dir --no-compile && \
       find /var/task/build/python -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; \
+      find /var/task/build -exec touch -t 200001010000 {} +; \
       true"
-
 echo "==> Done: ${BUILD_DIR}"
 echo "    Linux native binaries (.so), if any:"
 find "${BUILD_DIR}" -name "*.so" | head -5 || echo "    (none = pure Python only)"
