@@ -17,7 +17,7 @@ variable "account_id" {
 variable "vector_store_type" {
   type        = string
   description = "ベクトルストアの種類（opensearch or s3_vectors）"
-  default     = "opensearch"
+  default     = "s3_vectors"
 }
 
 variable "opensearch_scheduled" {
