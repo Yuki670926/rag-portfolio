@@ -150,3 +150,6 @@ docs/handoff/
 
 # Claude Code ローカル設定（additionalDirectories 等のマシン固有値を含む。公開しない）
 .claude/settings.local.json
+
+# CLAUDE.md はローカル専用で運用する方針（公開リポにコミットしない）。誤コミット防止。
+/CLAUDE.md
