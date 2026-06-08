@@ -176,7 +176,7 @@ module "cloudwatch" {
 }
 
 module "dynamodb" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v2.0.1"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v2.2.14"
   project_name = local.project_name
   kms_key_arn  = module.kms.s3_kms_key_arn
 }
