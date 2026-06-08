@@ -38,16 +38,31 @@ def handler(event, context):
         groups = claims.get("cognito:groups", [])
 
         if ALLOWED_GROUP in groups:
-            return generate_policy("user", "Allow", method_arn)
+            # TOKEN authorizer の結果はトークン単位でキャッシュされる。特定メソッド ARN を
+            # 返すと、先に許可したメソッド(例 POST /upload)のポリシーが他メソッド(例 GET /status)
+            # に流用され 403 になる。ステージ全メソッドを許可するワイルドカードを返し、
+            # キャッシュを安全に共有する（さらに TTL=0 でキャッシュ自体も無効化）。
+            return generate_policy("user", "Allow", api_wildcard(method_arn))
         else:
+            print(f"authz: DENY (group missing) methodArn={method_arn} groups={groups}")
             return generate_policy("user", "Deny", method_arn)
 
     except JWTError as e:
-        print(f"JWT Error: {str(e)}")
+        print(f"authz: JWT Error: {str(e)} methodArn={method_arn}")
         return generate_policy("user", "Deny", method_arn)
     except Exception as e:
         print(f"Error: {str(e)}")
         return generate_policy("user", "Deny", method_arn)
+
+def api_wildcard(method_arn):
+    # methodArn = arn:aws:execute-api:region:acct:apiId/stage/METHOD/path...
+    # → arn:aws:execute-api:region:acct:apiId/stage/*/*（ステージ内の全メソッド/全リソース）
+    try:
+        parts = method_arn.split("/")
+        return f"{parts[0]}/{parts[1]}/*/*"
+    except Exception:
+        return method_arn
+
 
 def generate_policy(principal_id, effect, resource):
     return {
