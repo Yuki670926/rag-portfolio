@@ -7,6 +7,8 @@ on:
       - develop
     paths:
       - "terraform/**"
+      - "layers/**"             # 依存変更（requirements.lock 等）は layer 実体＝インフラを変えるので plan 対象
+      - "scripts/build-layer.sh" # layer ビルド手順の変更も同様
 
 jobs:
   plan:
