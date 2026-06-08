@@ -1,15 +1,35 @@
-name: Terraform Apply
+name: Terraform Dispatch (plan / apply)
 
+# 手動 dispatch で plan / apply を選べる。
+# TFVARS secret 変更（例: vector_store_type 切替）など、コード差分を伴わない変更でも
+# 先に command=plan で差分をレビューしてから command=apply できるようにするための安全ゲート。
+# default は安全側の plan（無指定 dispatch で誤 apply しない）。
 on:
   workflow_dispatch:
+    inputs:
+      command:
+        description: "plan か apply"
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      environment:
+        description: "対象環境"
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+        default: dev
 
 jobs:
-  apply:
-    permissions:          # ← 追加
+  run:
+    permissions:
       id-token: write
       contents: read
     uses: ./.github/workflows/_terraform.yml
     with:
-      environment: dev
-      command: apply
+      environment: ${{ inputs.environment }}
+      command: ${{ inputs.command }}
     secrets: inherit
