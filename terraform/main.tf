@@ -67,7 +67,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.12"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.18"
   project_name              = local.project_name
   documents_bucket_arn      = module.s3.documents_bucket_arn
   aws_region                = var.aws_region
