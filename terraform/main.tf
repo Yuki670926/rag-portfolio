@@ -232,7 +232,7 @@ module "dlq_opensearch_stop" {
 }
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.2"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.16"
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id
