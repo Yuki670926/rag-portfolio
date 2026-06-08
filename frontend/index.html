@@ -149,6 +149,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   let idToken = null;
   let currentUser = null;
+  const loadingTimers = {};  // ローディングメッセージごとの経過/ステージ更新タイマー
 
   // ========== 認証 ==========
   async function login() {
@@ -260,13 +261,33 @@ window.addEventListener('DOMContentLoaded', async () => {
     const id = "loading-" + Date.now();
     div.id = id;
     div.className = "message assistant";
-    div.innerHTML = `<div class="message-bubble"><span class="loading"></span><span class="loading"></span><span class="loading"></span></div>`;
+    // 段階的な進捗表示：検索 → 生成 ＋ 経過秒、コールド時はウォームアップ案内。
+    // バックエンドは単一リクエスト（検索→生成を内部実行）なので、ここでは実測の
+    // 所要時間に合わせたステージ近似を表示する（厳密な段階通知はストリーミング化＝
+    // 項目3で対応）。
+    div.innerHTML = `<div class="message-bubble">`
+      + `<span id="${id}-label">🔍 ドキュメントを検索中…</span> `
+      + `<span id="${id}-time" style="opacity:0.55;font-size:12px"></span> `
+      + `<span class="loading"></span><span class="loading"></span><span class="loading"></span>`
+      + `</div>`;
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
+    const start = Date.now();
+    loadingTimers[id] = setInterval(() => {
+      const sec = Math.floor((Date.now() - start) / 1000);
+      const timeEl = document.getElementById(id + "-time");
+      const labelEl = document.getElementById(id + "-label");
+      if (timeEl) timeEl.textContent = `(${sec}秒)`;
+      if (labelEl) {
+        if (sec >= 16) labelEl.textContent = "⏳ ベクトルストアをウォームアップ中…（初回は時間がかかります）";
+        else if (sec >= 3) labelEl.textContent = "✍️ 回答を生成中…";
+      }
+    }, 500);
     return id;
   }
 
   function removeMessage(id) {
+    if (loadingTimers[id]) { clearInterval(loadingTimers[id]); delete loadingTimers[id]; }
     const el = document.getElementById(id);
     if (el) el.remove();
   }
@@ -322,7 +343,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     document.getElementById("uploadStatus").textContent =
-      "✅ アップロード完了！ドキュメントの処理には数分かかります。";
+      "✅ アップロード完了。バックグラウンドで索引化しています（通常 数十秒〜）。完了するとチャットで質問できます。";
     document.getElementById("fileName").textContent = "";
     document.getElementById("fileInput").value = "";
 
