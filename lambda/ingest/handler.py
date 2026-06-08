@@ -56,7 +56,13 @@ def get_opensearch_client(endpoint):
         http_auth=get_aws_auth(),
         use_ssl=True,
         verify_certs=True,
-        connection_class=RequestsHttpConnection
+        connection_class=RequestsHttpConnection,
+        # OpenSearch Serverless NextGen は scale-to-zero。アイドル後の初回書込みは
+        # コレクション暖機で既定 10 秒を超えタイムアウトする。timeout を延ばし、
+        # タイムアウト時は再試行（暖機後は即応）。ingest Lambda は timeout=300s。
+        timeout=30,
+        max_retries=3,
+        retry_on_timeout=True
     )
 
 def ensure_index(client):
