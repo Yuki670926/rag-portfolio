@@ -128,8 +128,11 @@ module "api_gateway" {
   authorizer_lambda_invoke_arn = module.lambda.authorizer_lambda_invoke_arn
   authorizer_lambda_arn        = module.lambda.authorizer_lambda_arn
   stage_name                   = var.environment
-  # presigned_url モジュールに /status ルートを追加したため再デプロイを強制（1→2）
-  deployment_revision = "2"
+  # presigned_url モジュールに /status ルートを追加したため再デプロイを強制。
+  # 注意：deployment は api_gateway モジュール内にあり presigned のルート作成より先に
+  # snapshot されるため、新ルート追加の初回 apply では取り込まれない（クロスモジュール順序）。
+  # ルートが存在した状態でもう一度 revision を bump して再 apply すると確実に取り込まれる（2→3）。
+  deployment_revision = "3"
 }
 
 module "cloudfront" {
