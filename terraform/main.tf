@@ -149,7 +149,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.0.2"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.17"
   project_name          = local.project_name
   documents_bucket_name = module.s3.documents_bucket_name
   documents_bucket_arn  = module.s3.documents_bucket_arn
@@ -159,6 +159,7 @@ module "presigned_url" {
   execution_arn         = module.api_gateway.execution_arn
   lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
   cloudfront_domain     = module.cloudfront.distribution_domain_name
+  kms_key_arn           = module.kms.s3_kms_key_arn
 }
 
 module "budgets" {

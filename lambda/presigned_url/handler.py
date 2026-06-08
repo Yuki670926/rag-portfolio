@@ -1,9 +1,17 @@
 ﻿import json
 import os
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
-s3_client = boto3.client("s3", region_name="ap-northeast-1")
+# SSE-KMS バケットへの presigned PUT は AWS Signature Version 4 が必須。
+# 既定の SigV2 だと S3 が 400 InvalidArgument
+# ("Requests specifying SSE with AWS KMS managed keys require AWS Signature Version 4.") を返す。
+s3_client = boto3.client(
+    "s3",
+    region_name="ap-northeast-1",
+    config=Config(signature_version="s3v4"),
+)
 
 BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET", "")
 EXPIRATION = 300
