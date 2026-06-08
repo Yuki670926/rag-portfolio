@@ -117,7 +117,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.19"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.20"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -128,11 +128,9 @@ module "api_gateway" {
   authorizer_lambda_invoke_arn = module.lambda.authorizer_lambda_invoke_arn
   authorizer_lambda_arn        = module.lambda.authorizer_lambda_arn
   stage_name                   = var.environment
-  # presigned_url モジュールに /status ルートを追加したため再デプロイを強制。
-  # 注意：deployment は api_gateway モジュール内にあり presigned のルート作成より先に
-  # snapshot されるため、新ルート追加の初回 apply では取り込まれない（クロスモジュール順序）。
-  # ルートが存在した状態でもう一度 revision を bump して再 apply すると確実に取り込まれる（2→3）。
-  deployment_revision = "3"
+  # /status 追加で 2→3。authorizer TTL=0 を stage に反映するため再度 3→4。
+  # （REST API GW は authorizer 変更も deployment スナップショット経由で反映されるため）。
+  deployment_revision = "4"
 }
 
 module "cloudfront" {
