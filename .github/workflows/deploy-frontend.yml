@@ -28,7 +28,10 @@ jobs:
 
       - name: Sync to S3
         run: |
-          aws s3 sync frontend/ s3://${{ secrets.FRONTEND_BUCKET }} --delete
+          # config.json は Terraform 管理（module.s3.aws_s3_object.config）でバケットに存在し、
+          # frontend/ には含まれない。--delete で消さないよう必ず除外する
+          # （除外しないと毎回 config.json が消え、フロントの設定取得が失敗して login 不能になる）。
+          aws s3 sync frontend/ s3://${{ secrets.FRONTEND_BUCKET }} --delete --exclude "config.json"
 
       - name: Invalidate CloudFront cache
         run: |
