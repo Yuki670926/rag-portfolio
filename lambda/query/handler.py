@@ -58,11 +58,13 @@ def get_opensearch_client(endpoint):
         use_ssl=True,
         verify_certs=True,
         connection_class=RequestsHttpConnection,
-        # OpenSearch Serverless NextGen は scale-to-zero。アイドル後の初回検索は
-        # コレクション暖機で既定 10 秒を超えタイムアウトする。timeout を延ばし、
-        # タイムアウト時は再試行（暖機後は即応）。query Lambda は timeout=60s。
-        timeout=20,
-        max_retries=2,
+        # query は同期 API（REST API Gateway の統合タイムアウトは上限 29 秒）。
+        # NextGen は scale-to-zero でコールド時に暖機遅延があるため、29 秒を超えて
+        # 504 を返さないよう「短め timeout × 1 リトライ」で最悪 16 秒に収める
+        # （暖機が間に合えば成功、間に合わなければ graceful にエラー応答→再質問で復帰）。
+        # コールドを“成功”させたい場合は collection を warm に保つ運用が必要（設計判断）。
+        timeout=8,
+        max_retries=1,
         retry_on_timeout=True
     )
 
