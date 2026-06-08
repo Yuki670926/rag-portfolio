@@ -57,7 +57,13 @@ def get_opensearch_client(endpoint):
         http_auth=get_aws_auth(),
         use_ssl=True,
         verify_certs=True,
-        connection_class=RequestsHttpConnection
+        connection_class=RequestsHttpConnection,
+        # OpenSearch Serverless NextGen は scale-to-zero。アイドル後の初回検索は
+        # コレクション暖機で既定 10 秒を超えタイムアウトする。timeout を延ばし、
+        # タイムアウト時は再試行（暖機後は即応）。query Lambda は timeout=60s。
+        timeout=20,
+        max_retries=2,
+        retry_on_timeout=True
     )
 
 def get_embedding(text):
