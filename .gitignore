@@ -143,3 +143,13 @@ lambda/**/*.pyc
 terraform/plan.txt
 terraform/tfplan
 terraform/secret.json
+
+# 内部引き継ぎドキュメント（AWSアカウントID・組織ID・SSOポータルURL・メール・面接戦略を含む）
+# 公開リポジトリのため絶対にコミットしない。ローカル参照専用。
+docs/handoff/
+
+# Claude Code ローカル設定（additionalDirectories 等のマシン固有値を含む。公開しない）
+.claude/settings.local.json
+
+# CLAUDE.md はローカル専用で運用する方針（公開リポにコミットしない）。誤コミット防止。
+/CLAUDE.md
