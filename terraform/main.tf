@@ -67,7 +67,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.18"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.19"
   project_name              = local.project_name
   documents_bucket_arn      = module.s3.documents_bucket_arn
   aws_region                = var.aws_region
@@ -85,6 +85,8 @@ module "lambda" {
   knowledge_base_arn        = try(module.knowledge_base[0].knowledge_base_arn, "*")
   enable_private_networking = var.enable_private_networking
   kms_key_arn               = module.kms.s3_kms_key_arn
+  pdf_indexes_table_name    = module.dynamodb.pdf_indexes_table_name
+  pdf_indexes_table_arn     = module.dynamodb.pdf_indexes_table_arn
 }
 
 module "opensearch" {
@@ -115,7 +117,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.8"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.19"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -126,6 +128,11 @@ module "api_gateway" {
   authorizer_lambda_invoke_arn = module.lambda.authorizer_lambda_invoke_arn
   authorizer_lambda_arn        = module.lambda.authorizer_lambda_arn
   stage_name                   = var.environment
+  # presigned_url モジュールに /status ルートを追加したため再デプロイを強制。
+  # 注意：deployment は api_gateway モジュール内にあり presigned のルート作成より先に
+  # snapshot されるため、新ルート追加の初回 apply では取り込まれない（クロスモジュール順序）。
+  # ルートが存在した状態でもう一度 revision を bump して再 apply すると確実に取り込まれる（2→3）。
+  deployment_revision = "3"
 }
 
 module "cloudfront" {
@@ -149,7 +156,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.17"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.19"
   project_name          = local.project_name
   documents_bucket_name = module.s3.documents_bucket_name
   documents_bucket_arn  = module.s3.documents_bucket_arn
@@ -160,6 +167,8 @@ module "presigned_url" {
   lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
   cloudfront_domain     = module.cloudfront.distribution_domain_name
   kms_key_arn           = module.kms.s3_kms_key_arn
+  pdf_indexes_table_name = module.dynamodb.pdf_indexes_table_name
+  pdf_indexes_table_arn  = module.dynamodb.pdf_indexes_table_arn
 }
 
 module "budgets" {

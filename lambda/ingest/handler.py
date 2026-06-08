@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import boto3
 import urllib.parse
 from pypdf import PdfReader
@@ -17,11 +18,13 @@ s3_client = boto3.client("s3")
 bedrock_client = boto3.client("bedrock-runtime", region_name="ap-northeast-1")
 bedrock_agent_client = boto3.client("bedrock-agent", region_name="ap-northeast-1")
 ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
+dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
 
 VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
 SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
+PDF_INDEXES_TABLE = os.environ.get("PDF_INDEXES_TABLE", "")
 INDEX_NAME = "documents"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
@@ -170,6 +173,23 @@ def handler(event, context):
             }
             os_client.index(index=INDEX_NAME, body=doc)
             logger.info(f"Indexed chunk {i}: {chunk[:50]}...")
+
+        # 索引化完了フラグを DynamoDB pdf_indexes に記録（フロントの「準備完了」polling 用）。
+        # ドキュメントは現状グローバル共有のため user_id は定数 "shared"（マルチテナント化は別案件）。
+        # 失敗しても ingest 本体は成功扱い（フラグは付帯情報）。
+        if PDF_INDEXES_TABLE:
+            try:
+                pdf_name = os.path.basename(key)
+                dynamodb.Table(PDF_INDEXES_TABLE).put_item(Item={
+                    "user_id": "shared",
+                    "pdf_name": pdf_name,
+                    "status": "ready",
+                    "chunks": len(chunks),
+                    "indexed_at": int(time.time()),
+                })
+                logger.info(f"Readiness flag written: {pdf_name} (chunks={len(chunks)})")
+            except Exception as e:
+                logger.warning(f"Failed to write readiness flag for {key}: {e}")
 
     return {"statusCode": 200, "body": "Ingestion complete"}
 
