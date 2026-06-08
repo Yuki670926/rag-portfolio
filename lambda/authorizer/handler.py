@@ -42,9 +42,7 @@ def handler(event, context):
             # 返すと、先に許可したメソッド(例 POST /upload)のポリシーが他メソッド(例 GET /status)
             # に流用され 403 になる。ステージ全メソッドを許可するワイルドカードを返し、
             # キャッシュを安全に共有する（さらに TTL=0 でキャッシュ自体も無効化）。
-            resource = api_wildcard(method_arn)
-            print(f"authz: ALLOW methodArn={method_arn} resource={resource}")
-            return generate_policy("user", "Allow", resource)
+            return generate_policy("user", "Allow", api_wildcard(method_arn))
         else:
             print(f"authz: DENY (group missing) methodArn={method_arn} groups={groups}")
             return generate_policy("user", "Deny", method_arn)
