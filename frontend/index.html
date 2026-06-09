@@ -194,6 +194,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById("password").value = "";
   }
 
+  // セッション(idToken)が期限切れ(API が 401)のときの誘導。ログイン画面へ戻し理由を明示する。
+  // email は残して素早く再ログインできるようにする（再ログインで Post-Auth ウォーマーも起動）。
+  function sessionExpired() {
+    idToken = null;
+    currentUser = null;
+    document.getElementById("authSection").style.display = "block";
+    document.getElementById("mainSection").classList.remove("active");
+    document.getElementById("authError").textContent =
+      "セッションの有効期限が切れました。お手数ですが、もう一度ログインしてください。";
+  }
+
   // ========== タブ ==========
   function showTab(tab, el) {
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
@@ -227,9 +238,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         },
         body: JSON.stringify({ question })
       });
-      const data = await res.json();
       removeMessage(loadingId);
 
+      // 401/403 = セッション(idToken)の期限切れ → 「不明なエラー」ではなく再ログインへ誘導
+      if (res.status === 401 || res.status === 403) {
+        document.getElementById("sendBtn").disabled = false;
+        sessionExpired();
+        return;
+      }
+
+      const data = await res.json();
       if (data.answer) {
         addMessage("assistant", data.answer, data.sources);
       } else {
@@ -322,6 +340,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       })
     });
 
+    // 401/403 = セッション期限切れ → 再ログインへ誘導
+    if (res.status === 401 || res.status === 403) {
+      document.getElementById("uploadBtn").disabled = false;
+      sessionExpired();
+      return;
+    }
+
     const data = await res.json();
     if (!data.upload_url) {
       throw new Error(data.error || "URLの取得に失敗しました");
@@ -367,6 +392,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         const res = await fetch(`${CONFIG.API_URL}/status?pdf=${encodeURIComponent(pdfName)}`, {
           headers: { "Authorization": idToken }
         });
+        // 401/403 = セッション期限切れ → polling を止めて再ログインへ誘導
+        if (res.status === 401 || res.status === 403) {
+          sessionExpired();
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           if (data.ready) {
