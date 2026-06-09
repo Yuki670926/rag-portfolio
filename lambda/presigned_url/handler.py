@@ -13,9 +13,13 @@ s3_client = boto3.client(
     config=Config(signature_version="s3v4"),
 )
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
+bedrock_agent = boto3.client("bedrock-agent", region_name="ap-northeast-1")
 
 BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET", "")
 PDF_INDEXES_TABLE = os.environ.get("PDF_INDEXES_TABLE", "")
+VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
+DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
 EXPIRATION = 300
 
 CORS = {"Access-Control-Allow-Origin": "*"}
@@ -32,6 +36,14 @@ def get_status(event):
     pdf_name = params.get("pdf", "")
     if not pdf_name:
         return _resp(400, {"error": "pdf パラメータが必要です"})
+
+    # s3_vectors はベクトルストアが Bedrock KB の「一括取り込みジョブ」方式で、per-doc の
+    # ready フラグが無い。アップロードで起動した最新の取り込みジョブが COMPLETE なら、その
+    # 文書も検索可能とみなす（opensearch の per-doc ready と UX 上のパリティを取る）。
+    if VECTOR_STORE_TYPE == "s3_vectors":
+        return _status_s3_vectors()
+
+    # opensearch：ingest が pdf_indexes に書く per-doc の ready フラグを見る。
     if not PDF_INDEXES_TABLE:
         return _resp(500, {"error": "status backend not configured"})
     try:
@@ -44,6 +56,25 @@ def get_status(event):
     except ClientError as e:
         print(f"DynamoDB Error: {str(e)}")
         return _resp(500, {"error": str(e)})
+
+
+def _status_s3_vectors():
+    # 最新の取り込みジョブが COMPLETE なら ready。IN_PROGRESS/STARTING の間は not ready。
+    if not (KNOWLEDGE_BASE_ID and DATA_SOURCE_ID):
+        return _resp(200, {"ready": True})  # KB 未設定時はブロックしない
+    try:
+        jobs = bedrock_agent.list_ingestion_jobs(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            dataSourceId=DATA_SOURCE_ID,
+            sortBy={"attribute": "STARTED_AT", "order": "DESCENDING"},
+            maxResults=1,
+        ).get("ingestionJobSummaries", [])
+        if jobs and jobs[0].get("status") == "COMPLETE":
+            return _resp(200, {"ready": True})
+        return _resp(200, {"ready": False})
+    except Exception as e:
+        print(f"s3_vectors status error: {str(e)}")
+        return _resp(200, {"ready": False})
 
 
 def create_presigned(event):
