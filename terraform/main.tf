@@ -156,7 +156,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.19"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.22"
   project_name          = local.project_name
   documents_bucket_name = module.s3.documents_bucket_name
   documents_bucket_arn  = module.s3.documents_bucket_arn
@@ -169,6 +169,9 @@ module "presigned_url" {
   kms_key_arn           = module.kms.s3_kms_key_arn
   pdf_indexes_table_name = module.dynamodb.pdf_indexes_table_name
   pdf_indexes_table_arn  = module.dynamodb.pdf_indexes_table_arn
+  vector_store_type      = var.vector_store_type
+  knowledge_base_id      = try(module.knowledge_base[0].knowledge_base_id, "")
+  data_source_id         = try(module.knowledge_base[0].data_source_id, "")
 }
 
 module "budgets" {
