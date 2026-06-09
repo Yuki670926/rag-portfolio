@@ -19,7 +19,7 @@ on:
         type: choice
         options:
           - dev
-          - stg
+          - stag
           - prod
         default: dev
       vector_store:
