@@ -1,3 +1,3 @@
-﻿bucket = "tfstate-rag-portfolio-086769"
+﻿bucket = "tfstate-rag-portfolio-prod"
 key    = "prod/terraform.tfstate"
 region = "ap-northeast-1"

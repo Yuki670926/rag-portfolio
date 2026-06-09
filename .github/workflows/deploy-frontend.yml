@@ -9,10 +9,24 @@ on:
       - main
     paths:
       - "frontend/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "配信先環境（手動 dispatch 時）"
+        type: choice
+        options:
+          - dev
+          - stag
+          - prod
+        default: dev
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # main への push は dev、手動 dispatch は選択環境へ配信。
+    # FRONTEND_BUCKET / FRONTEND_DEPLOY_ROLE_ARN / CF_DISTRIBUTION_ID は対応する
+    # GitHub Environment の secret から解決する（dev は repo secret 既定でも可）。
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
     permissions:
       id-token: write
       contents: read
