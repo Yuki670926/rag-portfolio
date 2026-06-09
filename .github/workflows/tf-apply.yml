@@ -22,6 +22,22 @@ on:
           - stg
           - prod
         default: dev
+      vector_store:
+        description: "ベクトルストア上書き（keep=TFVARS既定を使用）"
+        type: choice
+        options:
+          - keep
+          - s3_vectors
+          - opensearch
+        default: keep
+      private_networking:
+        description: "VPC隔離(層3)上書き（keep=TFVARS既定を使用）"
+        type: choice
+        options:
+          - keep
+          - "false"
+          - "true"
+        default: keep
 
 jobs:
   run:
@@ -32,4 +48,6 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       command: ${{ inputs.command }}
+      vector_store: ${{ inputs.vector_store }}
+      private_networking: ${{ inputs.private_networking }}
     secrets: inherit
