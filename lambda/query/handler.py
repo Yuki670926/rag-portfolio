@@ -241,10 +241,44 @@ def generate_answer(question, contexts, history):
     body = json.loads(response["body"].read())
     return body["content"][0]["text"]
 
+def warmup_opensearch():
+    # 非同期起動の暖機専用（同期パスより長い timeout＝REST API GW の 29s 制約と無関係）。
+    # コールド(scale-to-zero)からの scale-up を待つ。best-effort で、失敗しても無害。
+    if VECTOR_STORE_TYPE != "opensearch":
+        return {"warmup": "skipped"}
+    endpoint = get_vector_store_endpoint()
+    if not endpoint:
+        return {"warmup": "skipped", "reason": "no endpoint"}
+    host = endpoint.replace("https://", "")
+    warm_client = OpenSearch(
+        hosts=[{"host": host, "port": 443}],
+        http_auth=get_aws_auth(),
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+        timeout=20,
+        max_retries=1,
+        retry_on_timeout=True,
+    )
+    try:
+        warm_client.search(index=INDEX_NAME, body={"size": 0})
+        logger.info("warmup: collection ready")
+        return {"warmup": "ready"}
+    except Exception as e:
+        # コールドの timeout でもリクエスト到達で scale-up は始まる。404(index無)等の応答も warm 扱い。
+        logger.info(f"warmup: ping done (ignored): {e}")
+        return {"warmup": "pinged"}
+
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def handler(event, context):
+    # ログイン起点ウォーマー（Post-Auth トリガからの非同期起動 {"warmup": true}）。
+    # OpenSearch collection を暖機して初回検索のコールド timeout を防ぐ（cold-start 対策 D）。
+    if event.get("warmup"):
+        return warmup_opensearch()
+
     try:
         body = json.loads(event.get("body", "{}"))
         question = body.get("question", "")
