@@ -93,7 +93,7 @@ module "lambda" {
 
 module "opensearch" {
   count                     = var.vector_store_type == "opensearch" ? 1 : 0
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.23"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.24"
   project_name              = local.project_name
   ingest_lambda_role_arn    = module.lambda.ingest_lambda_role_arn
   query_lambda_role_arn     = module.lambda.query_lambda_role_arn
