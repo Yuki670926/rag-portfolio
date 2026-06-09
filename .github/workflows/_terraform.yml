@@ -12,6 +12,14 @@ on:
       command:
         required: true
         type: string      # plan or apply
+      vector_store:
+        required: false
+        type: string
+        default: keep     # keep=TFVARS既定 / s3_vectors / opensearch（-var で上書き）
+      private_networking:
+        required: false
+        type: string
+        default: keep     # keep=TFVARS既定 / false / true（-var で上書き）
 
 jobs:
   run:
@@ -59,12 +67,23 @@ jobs:
         run: terraform init -backend-config="environments/${{ inputs.environment }}-backend.hcl" -reconfigure
         working-directory: terraform
 
+      # ベクトルストア/ネットワークの一時上書き（keep 以外なら -var で tfvars を上書き）。
+      # 2x2 マトリクス（vector_store × private_networking）検証を secret 無改変で回すため。
+      - name: Build override vars
+        id: ov
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.vector_store }}" != "keep" ]; then EXTRA="$EXTRA -var=vector_store_type=${{ inputs.vector_store }}"; fi
+          if [ "${{ inputs.private_networking }}" != "keep" ]; then EXTRA="$EXTRA -var=enable_private_networking=${{ inputs.private_networking }}"; fi
+          echo "extra=$EXTRA" >> "$GITHUB_OUTPUT"
+          echo "override args: $EXTRA"
+
       - name: Terraform Plan
         if: inputs.command == 'plan'
-        run: terraform plan -no-color -var-file="environments/${{ inputs.environment }}.tfvars"
+        run: terraform plan -no-color -var-file="environments/${{ inputs.environment }}.tfvars" ${{ steps.ov.outputs.extra }}
         working-directory: terraform
 
       - name: Terraform Apply
         if: inputs.command == 'apply'
-        run: terraform apply -auto-approve -var-file="environments/${{ inputs.environment }}.tfvars"
+        run: terraform apply -auto-approve -var-file="environments/${{ inputs.environment }}.tfvars" ${{ steps.ov.outputs.extra }}
         working-directory: terraform
