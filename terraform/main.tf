@@ -147,7 +147,7 @@ module "cloudfront" {
 }
 
 module "github_actions" {
-  source                      = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.2.13"
+  source                      = "github.com/Yuki670926/rag-portfolio-modules//github_actions?ref=v2.2.25"
   project_name                = local.project_name
   environment                 = var.environment
   github_username             = "Yuki670926"
