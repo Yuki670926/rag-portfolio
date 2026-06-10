@@ -7,9 +7,13 @@ from botocore.exceptions import ClientError
 # SSE-KMS バケットへの presigned PUT は AWS Signature Version 4 が必須。
 # 既定の SigV2 だと S3 が 400 InvalidArgument
 # ("Requests specifying SSE with AWS KMS managed keys require AWS Signature Version 4.") を返す。
+# endpoint_url でリージョナルエンドポイントを強制：既定だとグローバル(s3.amazonaws.com)の
+# URL が生成されることがあり、作りたてのバケットは DNS 伝播まで us-east-1 から 307 が返る。
+# リダイレクト応答には CORS ヘッダが無くブラウザがブロックする（新環境構築直後に顕在化）。
 s3_client = boto3.client(
     "s3",
     region_name="ap-northeast-1",
+    endpoint_url="https://s3.ap-northeast-1.amazonaws.com",
     config=Config(signature_version="s3v4"),
 )
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
