@@ -83,7 +83,9 @@ def _status_s3_vectors():
 
 def create_presigned(event):
     body = json.loads(event.get("body", "{}"))
-    filename = body.get("filename", "")
+    # basename 化：filename はユーザー入力。"../" 等のパス要素を落とし、
+    # documents/ プレフィックス外への書き込み（パストラバーサル）を防ぐ。
+    filename = os.path.basename(body.get("filename", ""))
     content_type = body.get("content_type", "application/pdf")
 
     if not filename:
