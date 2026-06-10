@@ -20,6 +20,11 @@ on:
           - prod
         default: dev
 
+# 同一環境への並行配信を直列化
+concurrency:
+  group: frontend-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
