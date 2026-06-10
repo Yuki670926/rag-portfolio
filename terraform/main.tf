@@ -41,9 +41,11 @@ locals {
 }
 
 module "vpc" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.26"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.28"
   project_name              = local.project_name
   enable_private_networking = var.enable_private_networking
+  # aoss-data EP は OpenSearch 使用時のみ（s3_vectors では不要な固定費のため作らない）
+  aoss_endpoint_enabled     = var.vector_store_type == "opensearch"
 }
 
 module "s3" {
