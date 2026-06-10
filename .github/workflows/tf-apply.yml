@@ -39,6 +39,11 @@ on:
           - "true"
         default: keep
 
+# 同一環境への並行実行を直列化（state の use_lockfile と併せた二重防御。後発はキャンセルせず待機）
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   run:
     permissions:

@@ -20,12 +20,6 @@ variable "vector_store_type" {
   default     = "s3_vectors"
 }
 
-variable "opensearch_scheduled" {
-  type        = bool
-  description = "OpenSearchの自動起動・停止を有効にするか"
-  default     = false
-}
-
 variable "enable_private_networking" {
   type        = bool
   description = "プライベートネットワーキングを有効化するか（LambdaのVPC配置＋VPCエンドポイント経由のプライベート通信。層3の経路隔離）"

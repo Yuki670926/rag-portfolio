@@ -31,8 +31,14 @@ def handler(event, context):
             token,
             jwks,
             algorithms=["RS256"],
-            audience=APP_CLIENT_ID
+            audience=APP_CLIENT_ID,
+            issuer=f"https://cognito-idp.{REGION}.amazonaws.com/{USER_POOL_ID}",
         )
+
+        # id トークンのみ受け付ける（access トークン等の流用を拒否）
+        if claims.get("token_use") != "id":
+            print(f"authz: DENY (token_use={claims.get('token_use')}) methodArn={method_arn}")
+            return generate_policy("user", "Deny", method_arn)
 
         # グループを確認
         groups = claims.get("cognito:groups", [])
@@ -41,7 +47,7 @@ def handler(event, context):
             # TOKEN authorizer の結果はトークン単位でキャッシュされる。特定メソッド ARN を
             # 返すと、先に許可したメソッド(例 POST /upload)のポリシーが他メソッド(例 GET /status)
             # に流用され 403 になる。ステージ全メソッドを許可するワイルドカードを返し、
-            # キャッシュを安全に共有する（さらに TTL=0 でキャッシュ自体も無効化）。
+            # キャッシュ(TTL=300)を安全に共有する。
             return generate_policy("user", "Allow", api_wildcard(method_arn))
         else:
             print(f"authz: DENY (group missing) methodArn={method_arn} groups={groups}")

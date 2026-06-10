@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Lambda Layer build script
 #
-# Builds dependencies in the official Lambda image (Amazon Linux / Python 3.12)
+# Builds dependencies in the official Lambda image (Amazon Linux / Python 3.13)
 # so native binaries (.so) are Lambda-compatible, avoiding the Windows .pyd
 # problem that occurs when pip installing on a Windows host.
 #
@@ -19,7 +19,7 @@
 #
 # Regenerate the lock after editing requirements.txt (Docker required):
 #   docker run --rm --entrypoint /bin/bash -v "<repo>/layers/<name>:/var/task" \
-#     public.ecr.aws/lambda/python:3.12 \
+#     public.ecr.aws/lambda/python:3.13 \
 #     -c "pip install -r /var/task/requirements.txt -t /tmp/b --no-cache-dir --no-compile -q && pip list --path /tmp/b --format=freeze | sort" \
 #     > layers/<name>/requirements.lock
 #
@@ -35,7 +35,7 @@ set -euo pipefail
 LAYER_NAME="${1:?Usage: ./build-layer.sh <layer-name>}"
 LAYER_DIR="layers/${LAYER_NAME}"
 BUILD_DIR="${LAYER_DIR}/build/python"
-PYTHON_RUNTIME="public.ecr.aws/lambda/python:3.12"
+PYTHON_RUNTIME="public.ecr.aws/lambda/python:3.13"
 if [ ! -f "${LAYER_DIR}/requirements.lock" ]; then
   echo "ERROR: ${LAYER_DIR}/requirements.lock not found (regenerate from requirements.txt; see header)" >&2
   exit 1
