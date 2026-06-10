@@ -95,12 +95,13 @@ module "lambda" {
 
 module "opensearch" {
   count                     = var.vector_store_type == "opensearch" ? 1 : 0
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.24"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.30"
   project_name              = local.project_name
   ingest_lambda_role_arn    = module.lambda.ingest_lambda_role_arn
   query_lambda_role_arn     = module.lambda.query_lambda_role_arn
   enable_private_networking = var.enable_private_networking
   aoss_vpc_endpoint_id      = module.vpc.aoss_vpc_endpoint_id
+  kms_key_arn               = module.kms.aoss_kms_key_arn
 }
 
 module "s3_vectors" {
@@ -217,7 +218,9 @@ module "dlq_ingest" {
 
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.29"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.30"
+  # aoss 用 CMK は OpenSearch 使用時のみ作成（全データストア CMK 統一・s3_vectors では不要な$1/月を回避）
+  create_aoss_key = (var.vector_store_type == "opensearch")
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id
