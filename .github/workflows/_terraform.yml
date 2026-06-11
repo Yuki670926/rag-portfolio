@@ -15,7 +15,7 @@ on:
       vector_store:
         required: false
         type: string
-        default: keep     # keep=TFVARS既定 / s3_vectors / opensearch（-var で上書き）
+        default: keep     # keep=TFVARS既定 / s3_vectors / opensearch / dual（-var で上書き）
       private_networking:
         required: false
         type: string
@@ -71,7 +71,8 @@ jobs:
         working-directory: terraform
 
       # ベクトルストア/ネットワークの一時上書き（keep 以外なら -var で tfvars を上書き）。
-      # 2x2 マトリクス（vector_store × private_networking）検証を secret 無改変で回すため。
+      # 3x2 マトリクス（vector_store: s3_vectors/opensearch/dual × private_networking: false/true）
+      # 検証を secret 無改変で回すため。
       - name: Build override vars
         id: ov
         run: |
