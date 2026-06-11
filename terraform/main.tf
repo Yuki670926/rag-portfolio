@@ -71,12 +71,13 @@ module "s3" {
 }
 
 module "cognito" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v2.2.33"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v2.2.34"
   project_name = local.project_name
   environment  = var.environment
-  admin_email  = "test@example.com"
-  aws_region   = var.aws_region
-  account_id   = var.account_id
+  # admin のメール（＝ログイン username）はモジュール側が Secrets Manager
+  # （rp-{env}-alert-email）から読む。公開リポにハードコードしない。
+  aws_region = var.aws_region
+  account_id = var.account_id
   # 登録ユーザー（再生成不能）の保護：prod のみ User Pool の置換 apply を明示エラーで停止
   deletion_protection = local.is_prod
 }
@@ -106,7 +107,7 @@ module "lambda" {
 
 module "opensearch" {
   count                     = contains(["opensearch", "dual"], var.vector_store_type) ? 1 : 0
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.30"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.34"
   project_name              = local.project_name
   ingest_lambda_role_arn    = module.lambda.ingest_lambda_role_arn
   query_lambda_role_arn     = module.lambda.query_lambda_role_arn
@@ -135,7 +136,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.26"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.34"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn
@@ -198,10 +199,15 @@ module "budgets" {
 }
 
 module "cloudwatch" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v2.2.27"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v2.2.34"
   project_name = local.project_name
   aws_region   = var.aws_region
   alert_email  = module.budgets.alert_email
+  account_id   = var.account_id
+  # AOSS の OCU 滞留アラーム（scale-to-zero 不全の検知）。GroupId は collection 再作成で
+  # 変わるため output 経由で渡し自動追従。OpenSearch 不使用時は空＝アラーム自体を作らない
+  aoss_collection_group_id   = try(module.opensearch[0].collection_group_id, "")
+  aoss_collection_group_name = try(module.opensearch[0].collection_group_name, "")
 }
 
 module "dynamodb" {
@@ -231,7 +237,7 @@ module "dlq_ingest" {
 
 
 module "kms" {
-  source = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.33"
+  source = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.34"
   # aoss 用 CMK は OpenSearch 使用時のみ作成（全データストア CMK 統一・s3_vectors では不要な$1/月を回避）
   create_aoss_key = contains(["opensearch", "dual"], var.vector_store_type)
   project_name    = local.project_name
@@ -239,6 +245,9 @@ module "kms" {
   account_id      = var.account_id
   # 正本を抱える s3 鍵の削除待機（取消猶予）：prod は 30 日・dev/stag は最短 7 日
   s3_key_deletion_window_in_days = local.is_prod ? 30 : 7
+  # aoss 鍵の grant 経路を CI ロールに明示許可（AdministratorAccess への暗黙依存を解消。
+  # ロール ARN は循環回避のため構築文字列で参照＝github_actions モジュールに依存を張らない）
+  aoss_grant_principal_arns = ["arn:aws:iam::${var.account_id}:role/${local.project_name}-github-actions-role"]
 }
 
 module "waf" {
@@ -250,10 +259,35 @@ module "waf" {
   }
 }
 
+# authorizer 用 IAM ロール／ポリシーの同名二重定義の解消（api_gateway v2.2.34 で定義を撤去）。
+# 物理ロールは lambda モジュールの同名アドレスが管理を継続するため、api_gateway 側の
+# アドレスは destroy せず state から外すだけにする（destroy すると共有物理ロールが
+# 消えて authorizer が停止する）。
+removed {
+  from = module.api_gateway.aws_iam_role.lambda_authorizer
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = module.api_gateway.aws_iam_role_policy.lambda_authorizer
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+# 【移行中】per-env trail は組織 trail と記録範囲が100%重複し、管理イベントの
+# 2コピー目として課金されるため組織 trail に一本化する（実測: dev だけで月換算 ~$5）。
+# force_destroy=true は次のリリースでモジュールごと撤去するための準備
+# （同一イベントは組織 trail に記録済みのため監査ログは失われない）。
 module "cloudtrail" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudtrail?ref=v2.0.5"
-  project_name = local.project_name
-  account_id   = var.account_id
-  aws_region   = var.aws_region
-  kms_key_arn  = module.kms.cloudtrail_kms_key_arn
+  source        = "github.com/Yuki670926/rag-portfolio-modules//cloudtrail?ref=v2.2.34"
+  project_name  = local.project_name
+  account_id    = var.account_id
+  aws_region    = var.aws_region
+  kms_key_arn   = module.kms.cloudtrail_kms_key_arn
+  force_destroy = true
 }
