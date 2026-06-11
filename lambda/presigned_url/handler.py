@@ -42,34 +42,55 @@ def get_status(event):
         return _resp(400, {"error": "pdf パラメータが必要です"})
 
     # ストア別の readiness：
-    #   fast    = KB（S3 Vectors）。一括同期ジョブ方式のため「最新ジョブが COMPLETE」で判定
+    #   fast    = KB（S3 Vectors）。文書→起動ジョブの対応（ingest が記録）で per-doc 判定
     #   precise = OpenSearch。ingest が pdf_indexes に書く per-doc フラグで判定
-    # 後方互換：トップレベル ready は「最初に質問可能になる方」（fast 優先）。
+    # 後方互換：トップレベル ready は「いずれかのストアで質問可能になったか」。
+    # （dict は truthy のため `or` で繋ぐと常に fast 側が選ばれ、precise が先に
+    #   ready でも反映されないバグがあった→ any() で判定する。）
     stores = {}
     if VECTOR_STORE_TYPE in ("s3_vectors", "dual"):
-        stores["fast"] = _fast_ready()
+        stores["fast"] = _fast_ready(pdf_name)
     if VECTOR_STORE_TYPE in ("opensearch", "dual"):
         stores["precise"] = _precise_ready(pdf_name)
 
-    primary = stores.get("fast") or stores.get("precise") or {"ready": True}
-    body = {"ready": primary.get("ready", False), "stores": stores}
-    if "chunks" in primary:
-        body["chunks"] = primary["chunks"]  # 旧フロント互換（opensearch 単独時）
+    body = {
+        "ready": any(s.get("ready", False) for s in stores.values()) if stores else True,
+        "stores": stores,
+    }
+    chunks = next((s["chunks"] for s in stores.values() if "chunks" in s), None)
+    if chunks is not None:
+        body["chunks"] = chunks  # 旧フロント互換（opensearch 単独時）
     return _resp(200, body)
 
 
-def _fast_ready():
-    # 最新の取り込みジョブが COMPLETE なら ready。IN_PROGRESS/STARTING の間は not ready。
+def _fast_ready(pdf_name):
+    # 「この文書のイベントで起動したジョブ」（ingest が pdf_indexes に "<pdf>#fast" で記録）
+    # が COMPLETE なら ready。ジョブ単位のグローバル判定（最新ジョブ=COMPLETE）だと、
+    # アップロード直後の初回 polling が前回ジョブの COMPLETE を拾って未索引なのに
+    # 「✅ 完了」を出す偽陽性レースがあるため、per-doc 判定に揃える。
+    # 記録が無い＝ジョブ未起動（S3 イベント処理前 or 起動失敗のリトライ待ち）= not ready。
     if not (KNOWLEDGE_BASE_ID and DATA_SOURCE_ID):
         return {"ready": True}  # KB 未設定時はブロックしない
+    if not PDF_INDEXES_TABLE:
+        return {"ready": False}
     try:
+        item = dynamodb.Table(PDF_INDEXES_TABLE).get_item(
+            Key={"user_id": "shared", "pdf_name": f"{pdf_name}#fast"}
+        ).get("Item")
+        if not item:
+            return {"ready": False}
+        job_id = item.get("job_id", "")
         jobs = bedrock_agent.list_ingestion_jobs(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
             dataSourceId=DATA_SOURCE_ID,
             sortBy={"attribute": "STARTED_AT", "order": "DESCENDING"},
-            maxResults=1,
+            maxResults=20,
         ).get("ingestionJobSummaries", [])
-        return {"ready": bool(jobs and jobs[0].get("status") == "COMPLETE")}
+        status = next((j.get("status") for j in jobs
+                       if j.get("ingestionJobId") == job_id), None)
+        if status is None:
+            return {"ready": True}  # 直近 20 件より古い＝とうに完了したジョブ
+        return {"ready": status == "COMPLETE"}
     except Exception as e:
         print(f"fast status error: {str(e)}")
         return {"ready": False}
@@ -91,7 +112,12 @@ def _precise_ready(pdf_name):
 
 
 def create_presigned(event):
-    body = json.loads(event.get("body", "{}"))
+    # API GW プロキシ統合は空ボディ POST で body=None を渡す（.get の既定値は効かない）。
+    # 未捕捉だと CORS ヘッダ無しの 502 になりブラウザで原因不明化するため 400 で返す。
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except (TypeError, ValueError):
+        return _resp(400, {"error": "リクエストボディが不正です"})
     # basename 化：filename はユーザー入力。"../" 等のパス要素を落とし、
     # documents/ プレフィックス外への書き込み（パストラバーサル）を防ぐ。
     filename = os.path.basename(body.get("filename", ""))
@@ -130,3 +156,9 @@ def handler(event, context):
     except ClientError as e:
         print(f"Error: {str(e)}")
         return _resp(500, {"error": str(e)})
+    except Exception as e:
+        # 未捕捉例外は API GW の 502（CORS ヘッダ無し）になり、ブラウザでは
+        # 原因不明のネットワークエラーに見えるため、必ず CORS 付き 500 で返す
+        # （query handler と同じ方針）。
+        print(f"Unhandled error: {str(e)}")
+        return _resp(500, {"error": "内部エラーが発生しました"})
