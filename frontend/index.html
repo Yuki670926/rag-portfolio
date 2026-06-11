@@ -236,6 +236,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById("mainSection").classList.remove("active");
     document.getElementById("authError").textContent =
       "セッションの有効期限が切れました。お手数ですが、もう一度ログインしてください。";
+    // polling 中だった索引化表示は更新されなくなるため消す（凍結表示の誤認防止）
+    document.getElementById("uploadStatus").textContent = "";
   }
 
   // ========== タブ ==========
@@ -442,7 +444,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     const myGen = ++pollGeneration;
     const statusEl = document.getElementById("uploadStatus");
     const start = Date.now();
-    const TIMEOUT_MS = 90000;
+    // fast(KB) を含む構成は per-doc 判定の導入で「ジョブ完了まで」が正直に出るように
+    // なった分、完了まで分単位かかる（KB の一括同期ジョブ）→ タイムアウトを延長
+    const TIMEOUT_MS = (CONFIG.VECTOR_STORE_TYPE === "opensearch") ? 90000 : 180000;
+    let partialMsg = "";  // dual で片方だけ ready のときの表示（timeout 時にも残す）
     while (Date.now() - start < TIMEOUT_MS) {
       if (myGen !== pollGeneration) return; // 新しいアップロードに表示を譲って退出
       try {
@@ -456,21 +461,37 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
         if (res.ok) {
           const data = await res.json();
-          if (data.ready) {
-            if (myGen !== pollGeneration) return;
+          if (myGen !== pollGeneration) return;
+          const st = data.stores || {};
+          const dual = CONFIG.VECTOR_STORE_TYPE === "dual" && st.fast && st.precise;
+          if (dual && data.ready && !(st.fast.ready && st.precise.ready)) {
+            // 片方だけ準備完了：質問は可能だがモードを明示し、両方揃うまで polling 継続
+            // （既定モード⚡が未準備のまま「完了」と言うと、質問が「該当情報なし」に
+            //   なり故障に見えるため）
+            const ready = st.precise.ready ? "🎯 高精度" : "⚡ ふつう";
+            const waiting = st.precise.ready ? "⚡ ふつう" : "🎯 高精度";
+            partialMsg = `✅ ${ready}モードで質問できます（${waiting}は索引化中…）`;
+            statusEl.textContent = partialMsg;
+          } else if (data.ready) {
             const n = (data.chunks != null) ? `${data.chunks} チャンク` : "完了";
-            statusEl.textContent = `✅ 索引化完了（${n}）。チャットで質問できます。`;
+            statusEl.textContent = dual
+              ? "✅ 索引化完了（⚡/🎯 両モードで質問できます）。"
+              : `✅ 索引化完了（${n}）。チャットで質問できます。`;
             return;
           }
         }
       } catch (e) { /* ネットワーク一時失敗は無視して継続 */ }
       if (myGen !== pollGeneration) return;
-      const sec = Math.floor((Date.now() - start) / 1000);
-      statusEl.textContent = `✅ アップロード完了。索引化中… (${sec}秒)`;
+      if (!partialMsg) {
+        const sec = Math.floor((Date.now() - start) / 1000);
+        statusEl.textContent = `✅ アップロード完了。索引化中… (${sec}秒)`;
+      }
       await new Promise(r => setTimeout(r, 2500));
     }
     if (myGen !== pollGeneration) return;
-    statusEl.textContent = "⏳ 索引化に時間がかかっています。少し待ってからチャットで質問してください。";
+    statusEl.textContent = partialMsg
+      ? partialMsg + "（残りは数分かかることがあります）"
+      : "⏳ 索引化に時間がかかっています。少し待ってからチャットで質問してください。";
   }
 </script>
 </body>

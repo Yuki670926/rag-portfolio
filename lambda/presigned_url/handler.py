@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -89,7 +90,13 @@ def _fast_ready(pdf_name):
         status = next((j.get("status") for j in jobs
                        if j.get("ingestionJobId") == job_id), None)
         if status is None:
-            return {"ready": True}  # 直近 20 件より古い＝とうに完了したジョブ
+            # list の反映遅延でジョブ起動直後は一覧に出ないことがある。
+            # フラグが新しいうちは「結果整合性待ち」として not ready に倒し、
+            # 十分古ければ「直近 20 件より古い＝とうに完了したジョブ」とみなす。
+            started_at = int(item.get("started_at", 0))
+            if time.time() - started_at < 60:
+                return {"ready": False}
+            return {"ready": True}
         return {"ready": status == "COMPLETE"}
     except Exception as e:
         print(f"fast status error: {str(e)}")
@@ -138,11 +145,30 @@ def create_presigned(event):
         ExpiresIn=EXPIRATION,
         HttpMethod="PUT",
     )
+
+    # 同名 PDF の旧 readiness フラグを掃除（冪等・失敗しても発行は成功扱い）。
+    # 再アップロード時、ingest がイベントを処理するまで前回の ready フラグが残り、
+    # PUT 直後の初回 polling が「✅ 完了」を拾う偽陽性になるのを防ぐ。
+    # 発行だけして PUT しなかった場合もフラグが消えるが、影響は /status の表示のみ
+    # （索引と検索は無傷・次のアップロードで再生成される）。
+    _clear_ready_flags(filename)
+
     return _resp(200, {
         "upload_url": presigned_url,
         "key": f"documents/{filename}",
         "expires_in": EXPIRATION,
     })
+
+
+def _clear_ready_flags(pdf_name):
+    if not PDF_INDEXES_TABLE:
+        return
+    table = dynamodb.Table(PDF_INDEXES_TABLE)
+    for key_name in (pdf_name, f"{pdf_name}#fast"):
+        try:
+            table.delete_item(Key={"user_id": "shared", "pdf_name": key_name})
+        except Exception as e:
+            print(f"clear ready flag failed for {key_name}: {e}")
 
 
 def handler(event, context):

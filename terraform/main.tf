@@ -83,7 +83,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.31"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.35"
   project_name              = local.project_name
   documents_bucket_arn      = module.s3.documents_bucket_arn
   aws_region                = var.aws_region
@@ -173,7 +173,7 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                 = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.26"
+  source                 = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.35"
   project_name           = local.project_name
   documents_bucket_name  = module.s3.documents_bucket_name
   documents_bucket_arn   = module.s3.documents_bucket_arn
