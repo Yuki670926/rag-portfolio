@@ -22,7 +22,8 @@ bedrock_agent = boto3.client("bedrock-agent", region_name="ap-northeast-1")
 
 BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET", "")
 PDF_INDEXES_TABLE = os.environ.get("PDF_INDEXES_TABLE", "")
-VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+# 既定は s3_vectors（IaC の fail-safe 既定と統一）
+VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "s3_vectors")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
 EXPIRATION = 300
