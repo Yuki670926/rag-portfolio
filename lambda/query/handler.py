@@ -76,59 +76,87 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
-def search_documents(question):
+def _search_kb(question):
+    # fast 経路：Bedrock KB Retrieve（埋め込み生成・検索は KB 側で実行）
+    if not KNOWLEDGE_BASE_ID:
+        logger.error("KNOWLEDGE_BASE_ID not configured")
+        return []
+    try:
+        response = bedrock_agent_runtime.retrieve(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            retrievalQuery={"text": question},
+            retrievalConfiguration={
+                "vectorSearchConfiguration": {"numberOfResults": TOP_K}
+            },
+        )
+        results = []
+        for item in response.get("retrievalResults", []):
+            results.append({
+                "text": item.get("content", {}).get("text", ""),
+                "source": item.get("location", {})
+                              .get("s3Location", {})
+                              .get("uri", "unknown"),
+            })
+        return results
+    except Exception as e:
+        logger.error(f"KB Retrieve error: {str(e)}")
+        return []
+
+
+def _rrf_merge(rank_lists, k=60, top=TOP_K):
+    # Reciprocal Rank Fusion：スコア体系の異なるランキング（BM25 と kNN）を
+    # 1/(k+rank) の和で融合する定番手法。スコアの正規化が不要で頑健。
+    scores, docs = {}, {}
+    for hits in rank_lists:
+        for rank, h in enumerate(hits):
+            _id = h["_id"]
+            scores[_id] = scores.get(_id, 0.0) + 1.0 / (k + rank + 1)
+            docs[_id] = h["_source"]
+    return [docs[i] for i in sorted(scores, key=scores.get, reverse=True)[:top]]
+
+
+def _search_opensearch_hybrid(question):
+    """precise 経路：BM25（キーワード・略語/型番に強い）と kNN（意味検索）を
+    別々に実行し RRF で融合。接続失敗（コールド等）は None を返し、呼び出し側で
+    fast へフォールバックさせる。"""
+    endpoint = get_vector_store_endpoint()
+    if not endpoint:
+        return None
+    try:
+        client = get_opensearch_client(endpoint)
+        knn = client.search(index=INDEX_NAME, body={
+            "size": TOP_K * 2,
+            "query": {"knn": {"embedding": {
+                "vector": get_embedding(question), "k": TOP_K * 2}}}
+        })["hits"]["hits"]
+        bm25 = client.search(index=INDEX_NAME, body={
+            "size": TOP_K * 2,
+            "query": {"match": {"text": question}}
+        })["hits"]["hits"]
+        return _rrf_merge([knn, bm25])
+    except Exception as e:
+        logger.error(f"OpenSearch hybrid error: {str(e)}")
+        return None
+
+
+def search_documents(question, mode="fast"):
+    """構成とモードから実効バックエンドを決めて検索する。
+    返り値: (contexts, used_mode, fallback)
+      - 単独構成では構成側を優先（mode 指定は無視）
+      - dual の precise がコールド/障害のときは fast へ自動フォールバック"""
+    if VECTOR_STORE_TYPE == "s3_vectors":
+        return _search_kb(question), "fast", False
     if VECTOR_STORE_TYPE == "opensearch":
-        endpoint = get_vector_store_endpoint()
-        if not endpoint:
-            return []
-        try:
-            # OpenSearchはLambda側で埋め込みを作ってknn検索する
-            query_embedding = get_embedding(question)
-            client = get_opensearch_client(endpoint)
-            query = {
-                "size": TOP_K,
-                "query": {
-                    "knn": {
-                        "embedding": {
-                            "vector": query_embedding,
-                            "k": TOP_K
-                        }
-                    }
-                }
-            }
-            response = client.search(index=INDEX_NAME, body=query)
-            return [hit["_source"] for hit in response["hits"]["hits"]]
-        except Exception as e:
-            logger.error(f"OpenSearch error: {str(e)}")
-            return []
-    elif VECTOR_STORE_TYPE == "s3_vectors":
-        # Bedrock KB の Retrieve: テキストを渡すだけ。
-        # 埋め込み生成・ベクトル検索はKBが実行する（Lambdaは検索結果を受け取るのみ）。
-        if not KNOWLEDGE_BASE_ID:
-            logger.error("KNOWLEDGE_BASE_ID not configured")
-            return []
-        try:
-            response = bedrock_agent_runtime.retrieve(
-                knowledgeBaseId=KNOWLEDGE_BASE_ID,
-                retrievalQuery={"text": question},
-                retrievalConfiguration={
-                    "vectorSearchConfiguration": {"numberOfResults": TOP_K}
-                },
-            )
-            # KBの結果を既存のcontexts形式(text/source)に整形する
-            results = []
-            for item in response.get("retrievalResults", []):
-                results.append({
-                    "text": item.get("content", {}).get("text", ""),
-                    "source": item.get("location", {})
-                                  .get("s3Location", {})
-                                  .get("uri", "unknown"),
-                })
-            return results
-        except Exception as e:
-            logger.error(f"KB Retrieve error: {str(e)}")
-            return []
-    return []
+        ctx = _search_opensearch_hybrid(question)
+        return (ctx if ctx is not None else []), "precise", False
+    # dual
+    if mode == "precise":
+        ctx = _search_opensearch_hybrid(question)
+        if ctx is not None:
+            return ctx, "precise", False
+        logger.warning("precise unavailable (likely cold), falling back to fast")
+        return _search_kb(question), "fast", True
+    return _search_kb(question), "fast", False
     
 
 def get_session_id(user_id):
@@ -244,7 +272,7 @@ def generate_answer(question, contexts, history):
 def warmup_opensearch():
     # 非同期起動の暖機専用（同期パスより長い timeout＝REST API GW の 29s 制約と無関係）。
     # コールド(scale-to-zero)からの scale-up を待つ。best-effort で、失敗しても無害。
-    if VECTOR_STORE_TYPE != "opensearch":
+    if VECTOR_STORE_TYPE not in ("opensearch", "dual"):
         return {"warmup": "skipped"}
     endpoint = get_vector_store_endpoint()
     if not endpoint:
@@ -282,6 +310,7 @@ def handler(event, context):
     try:
         body = json.loads(event.get("body", "{}"))
         question = body.get("question", "")
+        mode = body.get("mode", "fast")  # fast | precise（dual のときのみ有効）
         if not question:
             return {
                 "statusCode": 400,
@@ -300,8 +329,8 @@ def handler(event, context):
         # 会話履歴取得
         history = get_conversation_history(user_id, session_id)
 
-        # RAG検索
-        contexts = search_documents(question)
+        # RAG検索（used_mode=実際に使った経路、fallback=precise 不可で fast に落ちたか）
+        contexts, used_mode, fallback = search_documents(question, mode)
 
         # 回答生成
         answer = generate_answer(question, contexts, history)
@@ -316,7 +345,9 @@ def handler(event, context):
             "body": json.dumps({
                 "answer": answer,
                 "sources": list(set([c.get("source") for c in contexts if c.get("source")])),
-                "context_count": len(contexts)
+                "context_count": len(contexts),
+                "mode": used_mode,
+                "fallback": fallback
             }, ensure_ascii=False)
         }
     except Exception as e:

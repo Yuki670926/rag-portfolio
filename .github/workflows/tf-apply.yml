@@ -29,6 +29,7 @@ on:
           - keep
           - s3_vectors
           - opensearch
+          - dual
         default: keep
       private_networking:
         description: "VPC隔離(層3)上書き（keep=TFVARS既定を使用）"
