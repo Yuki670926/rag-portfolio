@@ -1,8 +1,7 @@
 name: Deploy Frontend
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  
+# action は全てフルコミット SHA で固定（_terraform.yml と同方針）。更新は Dependabot。
+
 on:
   push:
     branches:
@@ -20,9 +19,11 @@ on:
           - prod
         default: dev
 
-# 同一環境への並行配信を直列化
+# 同一環境のデプロイ系（tf-apply / tf-plan / 本ワークフロー）を単一グループで直列化。
+# tf-apply は同じ frontend バケット・CloudFront を Terraform 管理しており、
+# 別グループだと s3 sync --delete と apply が同時に走り得るため group を統一する。
 concurrency:
-  group: frontend-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+  group: terraform-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
   cancel-in-progress: false
 
 jobs:
@@ -37,10 +38,10 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
           role-to-assume: ${{ secrets.FRONTEND_DEPLOY_ROLE_ARN }}
           aws-region: ap-northeast-1
