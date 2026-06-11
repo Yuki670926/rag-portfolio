@@ -117,8 +117,11 @@ def _rrf_merge(rank_lists, k=60, top=TOP_K):
 
 def _search_opensearch_hybrid(question):
     """precise 経路：BM25（キーワード・略語/型番に強い）と kNN（意味検索）を
-    別々に実行し RRF で融合。接続失敗（コールド等）は None を返し、呼び出し側で
-    fast へフォールバックさせる。"""
+    別々に実行し RRF で融合。
+    返り値の規約：[] = 正常に0件（index 未作成＝文書ゼロの正常状態を含む）／
+    None = 真の障害（接続失敗・コールド timeout 等）。index_not_found を None に
+    丸めると「文書ゼロの新環境」で恒久 503 になるため、ここで区別する
+    （warmup が 404 を warm 扱いするのと同じ整理）。"""
     endpoint = get_vector_store_endpoint()
     if not endpoint:
         return None
@@ -135,20 +138,26 @@ def _search_opensearch_hybrid(question):
         })["hits"]["hits"]
         return _rrf_merge([knn, bm25])
     except Exception as e:
+        if "index_not_found" in str(e).lower():
+            logger.info("documents index not created yet (no documents); empty result")
+            return []
         logger.error(f"OpenSearch hybrid error: {str(e)}")
         return None
 
 
 def search_documents(question, mode="fast"):
     """構成とモードから実効バックエンドを決めて検索する。
-    返り値: (contexts, used_mode, fallback)
+    返り値: (contexts, used_mode, fallback)。contexts=None は「検索系の障害」
+    （opensearch 単独でフォールバック先が無いケース）＝呼び出し側で 503 にする。
       - 単独構成では構成側を優先（mode 指定は無視）
       - dual の precise がコールド/障害のときは fast へ自動フォールバック"""
     if VECTOR_STORE_TYPE == "s3_vectors":
         return _search_kb(question), "fast", False
     if VECTOR_STORE_TYPE == "opensearch":
-        ctx = _search_opensearch_hybrid(question)
-        return (ctx if ctx is not None else []), "precise", False
+        # 障害（None）を空ヒットに偽装しない：文脈ゼロのまま回答生成に進むと
+        # 「無根拠回答が 200 で返る」ため、None はそのまま上げて明示エラーにする
+        # （get_opensearch_client のコメント「graceful にエラー応答」と実装を一致させる）。
+        return _search_opensearch_hybrid(question), "precise", False
     # dual
     if mode == "precise":
         ctx = _search_opensearch_hybrid(question)
@@ -251,10 +260,17 @@ def generate_answer(question, contexts, history):
 
 回答:"""
     else:
-        prompt = f"""過去の会話:
+        # 文脈ゼロ：RAG として無根拠回答を返さない。文書が取得できなかった事実を
+        # 必ず伝えさせ、一般知識での推測回答を明示的に禁止する。
+        prompt = f"""参照すべきドキュメントを取得できませんでした（検索結果が空です）。
+
+過去の会話:
 {history_text}
 
 質問: {question}
+
+まず「ドキュメントから該当する情報を取得できなかったため、文書に基づく回答はできない」ことを伝えてください。
+一般知識による推測で回答してはいけません。過去の会話から直接答えられる場合のみ、その範囲で簡潔に答えてください。
 
 回答:"""
 
@@ -308,7 +324,16 @@ def handler(event, context):
         return warmup_opensearch()
 
     try:
-        body = json.loads(event.get("body", "{}"))
+        # API GW プロキシ統合は空ボディ POST で body=None を渡す（.get の既定値は効かない）。
+        # presigned handler と同じ方針で 400 を返す。
+        try:
+            body = json.loads(event.get("body") or "{}")
+        except (TypeError, ValueError):
+            return {
+                "statusCode": 400,
+                "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"error": "リクエストボディが不正です"}, ensure_ascii=False)
+            }
         question = body.get("question", "")
         mode = body.get("mode", "fast")  # fast | precise（dual のときのみ有効）
         if not question:
@@ -341,6 +366,17 @@ def handler(event, context):
 
         # RAG検索（used_mode=実際に使った経路、fallback=precise 不可で fast に落ちたか）
         contexts, used_mode, fallback = search_documents(question, mode)
+
+        # None=検索系の障害でフォールバック先が無い（opensearch 単独のコールド等）。
+        # 文脈ゼロの回答生成に進まず 503 で再試行を促す（ウォームアップは進行中）。
+        if contexts is None:
+            return {
+                "statusCode": 503,
+                "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({
+                    "error": "検索エンジンの準備中です。少し待ってからもう一度お試しください。"
+                }, ensure_ascii=False)
+            }
 
         # 回答生成
         answer = generate_answer(question, contexts, history)

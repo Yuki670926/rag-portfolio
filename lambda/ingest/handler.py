@@ -3,6 +3,8 @@ import os
 import time
 import boto3
 import urllib.parse
+from datetime import datetime, timezone, timedelta
+from botocore.exceptions import ClientError
 from pypdf import PdfReader
 from io import BytesIO
 from opensearchpy import OpenSearch, RequestsHttpConnection
@@ -83,7 +85,11 @@ def ensure_index(client):
         }
     }
     # BM25（高精度モードのハイブリッド検索）の日本語品質のため kuromoji を試行。
-    # Serverless で未サポートの場合は standard アナライザにフォールバック（英字・型番は拾える）。
+    # フォールバックの発火は「kuromoji/analyzer 未サポートを示すエラー」に限定する。
+    # 一時的なタイムアウト等まで握ると standard で index が確定し、以後 exists() で
+    # 素通り＝日本語 BM25 品質が恒久ダウングレードして環境間差異も不可視になるため、
+    # それ以外のエラーは raise して非同期リトライに任せる。
+    # already-exists は並行 ingest の勝者がいるだけなので成功扱い。
     try:
         client.indices.create(index=INDEX_NAME, body={
             "settings": {
@@ -101,12 +107,32 @@ def ensure_index(client):
         })
         logger.info(f"Index {INDEX_NAME} created (kuromoji)")
     except Exception as e:
-        logger.warning(f"kuromoji index creation failed, falling back to standard: {e}")
-        client.indices.create(index=INDEX_NAME, body={
-            "settings": {"index.knn": True},
-            "mappings": mappings
-        })
-        logger.info(f"Index {INDEX_NAME} created (standard)")
+        # 実エラー文言の全文を記録（NextGen の拒否文言が下記語彙に合わない場合の調査用。
+        # 合わないと毎回 raise→DLQ で「index 永久未作成」になるが、無音化はしない）
+        logger.error(f"kuromoji index creation failed (raw): {e}")
+        msg = str(e).lower()
+        if "resource_already_exists" in msg:
+            logger.info("Index already exists (parallel create); continuing")
+            return
+        if not any(w in msg for w in ("kuromoji", "analyzer", "tokenizer", "analysis")):
+            raise  # 一時障害（timeout/スロットル等）はフォールバックせずリトライへ
+        logger.warning(f"kuromoji unsupported, falling back to standard: {e}")
+        try:
+            client.indices.create(index=INDEX_NAME, body={
+                "settings": {"index.knn": True},
+                "mappings": mappings
+            })
+            logger.info(f"Index {INDEX_NAME} created (standard)")
+        except Exception as e2:
+            if "resource_already_exists" in str(e2).lower():
+                return
+            raise
+    # 実効アナライザを記録：どちらのマッピングで作られたかを環境間で検知可能にする
+    try:
+        mapping = client.indices.get_mapping(index=INDEX_NAME)
+        logger.info(f"effective index mapping: {json.dumps(mapping, default=str)[:500]}")
+    except Exception as e:
+        logger.warning(f"get_mapping failed (non-fatal): {e}")
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()
@@ -127,7 +153,35 @@ def get_embedding(text):
 
 # ---------- fast 経路（Bedrock KB / S3 Vectors） ----------
 
-def start_kb_sync():
+def _find_covering_job(event_time):
+    """イベント発生時刻より後に開始されたジョブの id を返す（無ければ None）。
+    S3 は強整合のため「イベント時刻より後に開始された一括同期ジョブ」は当該
+    オブジェクトを必ず走査対象に含む＝そのジョブが成果として使える。
+    条件は2つ：
+      (1) status が生きている（STARTING/IN_PROGRESS/COMPLETE）。FAILED/STOPPED を
+          カバー扱いすると「取り込み漏れの無音化」が再発するため除外し raise 側に倒す
+      (2) startedAt がイベント時刻＋2秒以降。S3 と Bedrock のクロックずれで
+          「実はイベント前に開始したジョブ」を誤ってカバー判定しないための安全マージン"""
+    if event_time is None:
+        return None
+    try:
+        jobs = bedrock_agent_client.list_ingestion_jobs(
+            knowledgeBaseId=KNOWLEDGE_BASE_ID,
+            dataSourceId=DATA_SOURCE_ID,
+            sortBy={"attribute": "STARTED_AT", "order": "DESCENDING"},
+            maxResults=5,
+        ).get("ingestionJobSummaries", [])
+        threshold = event_time + timedelta(seconds=2)
+        for j in jobs:
+            started = j.get("startedAt")
+            if (started and started >= threshold
+                    and j.get("status") in ("STARTING", "IN_PROGRESS", "COMPLETE")):
+                return j.get("ingestionJobId")
+    except Exception as e:
+        logger.warning(f"covering-job check failed (treated as not covered): {e}")
+    return None
+
+def start_kb_sync(event_time=None):
     """KB のデータ同期ジョブを開始（fire-and-forget）。KB が S3 を差分同期するため、
     作成・削除どちらのイベントでもこの1本で反映される。"""
     if not KNOWLEDGE_BASE_ID or not DATA_SOURCE_ID:
@@ -142,13 +196,17 @@ def start_kb_sync():
         metrics.add_metric(name="KBIngestionStarted", unit=MetricUnit.Count, value=1)
         return f"job:{job_id}"
     except bedrock_agent_client.exceptions.ConflictException:
-        # 実行中ジョブと衝突。定期同期は存在しない（トリガは S3 イベントのみ）ため
-        # 「次の同期に任せる」と、実行中ジョブが本オブジェクトを拾わなかった場合に
-        # 取り込み漏れが恒久化する。raise して非同期リトライ（2回・計約3分）で
-        # 再キックし、それでも衝突が続くなら DLQ で可視化する。
-        # （リトライで precise 経路も再実行されるが、全処理冪等なので安全。
-        #   コストは埋め込み再計算のみ＝取り込み漏れの無音化より安い、の判断。）
-        logger.warning("Ingestion job already in progress; raising for async retry")
+        # 実行中ジョブと衝突（KB は同時 1 ジョブ）。定期同期は存在しないため
+        # 無条件に「次の同期に任せる」と取り込み漏れが恒久化し得る。一方で
+        # 無条件 raise は連続アップロード時に DLQ 常態化＋precise 再実行を招く。
+        # → 「イベント時刻より後に開始されたジョブ」があれば本オブジェクトは
+        #   カバー済みなので、そのジョブを成果として成功扱いにする。
+        #   カバー外のときだけ raise → 非同期リトライ（2回・約3分）→ DLQ で可視化。
+        covering = _find_covering_job(event_time)
+        if covering:
+            logger.info(f"Conflict, but job {covering} (started after event) covers this object")
+            return f"job:{covering}"
+        logger.warning("Ingestion job in progress and does not cover this event; raising for async retry")
         raise
 
 def put_fast_flag(key, job_ref):
@@ -156,7 +214,10 @@ def put_fast_flag(key, job_ref):
     # KB はバケット一括の同期ジョブ方式で、ジョブのグローバル状態だけでは
     # 「この文書が索引済みか」を判定できない（アップロード直後の /status polling が
     # 前回ジョブの COMPLETE を拾う偽陽性レースがある）ため、文書→ジョブの対応を残す。
-    # precise のフラグと同じテーブルに "<pdf>#fast" キーで同居（失敗しても付帯情報）。
+    # precise のフラグと同じテーブルに "<pdf>#fast" キーで同居。
+    # 注意：この記録は /status の fast 判定の唯一の根拠（失敗すると当該文書の表示が
+    # ready にならない）。ただし実害は表示のみ（索引自体は完了する）ため、
+    # 書き込み失敗で invocation 全体は落とさない。
     if not PDF_INDEXES_TABLE:
         return
     try:
@@ -180,23 +241,31 @@ def delete_fast_flag(key):
 
 # ---------- precise 経路（OpenSearch 自前パイプライン） ----------
 
-def delete_document_chunks(client, key):
-    """同一 source のチャンクを検索して個別削除（冪等）。
+def delete_document_chunks(client, key, keep_ids=frozenset()):
+    """同一 source のチャンクを検索して個別削除（冪等）。keep_ids は残す id
+    （upsert 直後の新チャンク）。
     （Serverless は delete_by_query 非対応の可能性があるため search+delete。
-      また検索インデックスの反映には遅延があり、削除済み文書が stale に返ることが
-      あるため、(a) 404 は無視 (b) 既に試行した id だけが返ったら終了、で収束させる。）"""
+      検索の反映遅延で削除済み doc が stale に返り得るため (a) 404 は無視
+      (b) 照会済み id は must_not で検索段階から除外＝stale が上位 200 件を
+      占有して 201 件目以降が隠れる取りこぼしも防ぐ、で収束させる。）"""
     deleted = 0
     seen = set()
     while True:
+        must_not = [{"ids": {"values": sorted(seen)}}] if seen else []
         resp = client.search(index=INDEX_NAME, body={
             "size": 200, "_source": False,
-            "query": {"term": {"source": key}}
+            "query": {"bool": {
+                "filter": [{"term": {"source": key}}],
+                "must_not": must_not,
+            }}
         })
-        ids = [h["_id"] for h in resp["hits"]["hits"] if h["_id"] not in seen]
+        ids = [h["_id"] for h in resp["hits"]["hits"]]
         if not ids:
             break
         for _id in ids:
             seen.add(_id)
+            if _id in keep_ids:
+                continue
             try:
                 client.delete(index=INDEX_NAME, id=_id)
                 deleted += 1
@@ -207,8 +276,11 @@ def delete_document_chunks(client, key):
     return deleted
 
 def upsert_document(client, bucket, key):
-    """upsert：旧チャンク削除 → 抽出 → チャンク → 埋め込み → 索引。
-    再アップロード（上書き）でもチャンクが重複しない。"""
+    """upsert：決定的 _id（"<key>#<i>"）で在位上書き → 残骸を掃除。
+    決定的 _id により再実行・重複配信は同じ doc への上書きになり、冪等性が
+    検索の反映遅延に依存しない（重複チャンク窓の構造的解消）。先に索引して
+    から旧分（旧自動 _id の残骸・チャンク数縮小分）を消すため、従来の
+    「削除→再投入」で生じていた検索空白窓も無い。"""
     response = s3_client.get_object(Bucket=bucket, Key=key)
     reader = PdfReader(BytesIO(response["Body"].read()))
     full_text = ""
@@ -217,7 +289,7 @@ def upsert_document(client, bucket, key):
     chunks = chunk_text(full_text)
     logger.info(f"{key}: {len(chunks)} chunks")
 
-    delete_document_chunks(client, key)
+    expected = set()
     for i, chunk in enumerate(chunks):
         doc = {
             "text": chunk,
@@ -225,8 +297,24 @@ def upsert_document(client, bucket, key):
             "source": key,
             "chunk_index": i
         }
-        client.index(index=INDEX_NAME, body=doc)
+        client.index(index=INDEX_NAME, id=f"{key}#{i}", body=doc)
+        expected.add(f"{key}#{i}")
+    delete_document_chunks(client, key, keep_ids=expected)
     return len(chunks)
+
+def object_exists(bucket, key):
+    """削除イベントの実行時点でオブジェクトが再作成されていないかの確認用。
+    「不存在」と断定するのは 404 のみ。スロットル等の一時障害まで False に丸めると、
+    生きている文書のチャンクを削除する方向（データ消失側）に倒れるため raise して
+    非同期リトライに任せる（s3:ListBucket 付与済みのため不存在は 404 で返る）。"""
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as e:
+        code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code == 404:
+            return False
+        raise
 
 def put_ready_flag(key, chunks):
     # precise（OpenSearch）側の per-doc 準備完了フラグ。失敗しても本体は成功扱い（付帯情報）。
@@ -258,17 +346,35 @@ def delete_ready_flag(key):
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def handler(event, context):
-    # S3 イベント（作成/削除）を仕分け
+    # S3 イベント（作成/削除）を仕分け。eventTime は KB 同期ジョブの
+    # カバレッジ判定（Conflict 時）に使うため最大値を控える。
     created, removed = [], []
+    latest_event_time = None
     for record in event.get("Records", []):
         name = record.get("eventName", "")
         bucket = record["s3"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+        try:
+            et = datetime.fromisoformat(record["eventTime"].replace("Z", "+00:00"))
+            if latest_event_time is None or et > latest_event_time:
+                latest_event_time = et
+        except Exception:
+            pass  # eventTime 欠落時はカバレッジ判定をスキップ（無条件 raise 側に倒れる）
         if name.startswith("ObjectCreated"):
             created.append((bucket, key))
         elif name.startswith("ObjectRemoved"):
             removed.append((bucket, key))
     logger.info(f"event: created={[k for _, k in created]} removed={[k for _, k in removed]}")
+
+    # 削除イベントのうち、実行時点でオブジェクトが再作成されているものは除外する。
+    # 非同期リトライでイベントの実行順序が実質入れ替わったとき、後から走る削除が
+    # 同名再アップロードの結果（チャンク・フラグ）を壊さないため（last-writer-wins）。
+    still_removed = []
+    for bucket, key in removed:
+        if object_exists(bucket, key):
+            logger.info(f"skip delete for {key}: object re-created (newer upload wins)")
+        else:
+            still_removed.append((bucket, key))
 
     # 両経路を分離した try/except で実行：片方の障害がもう片方を巻き込まない。
     # 片方でも失敗したら最後に例外を上げ、Lambda 非同期リトライ（→DLQ）に乗せる。
@@ -277,12 +383,12 @@ def handler(event, context):
 
     if VECTOR_STORE_TYPE in ("s3_vectors", "dual"):
         try:
-            job_ref = start_kb_sync()
+            job_ref = start_kb_sync(latest_event_time)
             # 文書→起動ジョブの対応を記録（/status の per-doc 判定用）。
             # 削除イベントの文書は記録ごと消す（polling 対象から外れる）。
             for _, key in created:
                 put_fast_flag(key, job_ref)
-            for _, key in removed:
+            for _, key in still_removed:
                 delete_fast_flag(key)
             results["fast"] = job_ref
         except Exception as e:
@@ -299,7 +405,7 @@ def handler(event, context):
             for bucket, key in created:
                 n = upsert_document(os_client, bucket, key)
                 put_ready_flag(key, n)
-            for _, key in removed:
+            for _, key in still_removed:
                 delete_document_chunks(os_client, key)
                 delete_ready_flag(key)
             results["precise"] = "ok"
