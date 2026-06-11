@@ -10,6 +10,7 @@ on:
       - "layers/**"             # 依存変更（requirements.lock 等）は layer 実体＝インフラを変えるので plan 対象
       - "scripts/build-layer.sh" # layer ビルド手順の変更も同様
       - "lambda/**"              # handler 変更も archive_file 経由でインフラ差分になるため plan 対象
+      - ".checkov.yaml"          # checkov はブロッキング（ラチェット）のため、skip 設定の変更も plan で検証する
 
 # plan も state を読む（use_lockfile のロックを短時間取得）ため apply と同じグループで直列化
 concurrency:
