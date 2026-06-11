@@ -148,21 +148,27 @@ def start_kb_sync():
 # ---------- precise 経路（OpenSearch 自前パイプライン） ----------
 
 def delete_document_chunks(client, key):
-    """同一 source のチャンクを検索して個別削除。
-    （Serverless は delete_by_query が使えない可能性があるため search+delete で実装。
-      カスタム文書IDもベクトル検索コレクションでは保証されないため依存しない。）"""
+    """同一 source のチャンクを検索して個別削除（冪等）。
+    （Serverless は delete_by_query 非対応の可能性があるため search+delete。
+      また検索インデックスの反映には遅延があり、削除済み文書が stale に返ることが
+      あるため、(a) 404 は無視 (b) 既に試行した id だけが返ったら終了、で収束させる。）"""
     deleted = 0
+    seen = set()
     while True:
         resp = client.search(index=INDEX_NAME, body={
-            "size": 100, "_source": False,
+            "size": 200, "_source": False,
             "query": {"term": {"source": key}}
         })
-        hits = resp["hits"]["hits"]
-        if not hits:
+        ids = [h["_id"] for h in resp["hits"]["hits"] if h["_id"] not in seen]
+        if not ids:
             break
-        for h in hits:
-            client.delete(index=INDEX_NAME, id=h["_id"])
-            deleted += 1
+        for _id in ids:
+            seen.add(_id)
+            try:
+                client.delete(index=INDEX_NAME, id=_id)
+                deleted += 1
+            except Exception:
+                pass  # 404（反映遅延で stale に見えていた削除済み doc）等は冪等に無視
     if deleted:
         logger.info(f"Deleted {deleted} old chunks for {key}")
     return deleted
