@@ -33,14 +33,15 @@ jobs:
 
       # Checkov は最も信頼度の低い第三者 action のため、AWS クレデンシャル取得より
       # 前に実行する（env にクレデンシャルが載った状態でサードパーティを動かさない）。
-      - name: Checkov IaC scan             # plan 時のみ。非ブロッキングのアドバイザリ（findings/エラーで plan を止めない）
+      # 2026-06-11 に全 findings を棚卸し済み：受容は .checkov.yaml に理由付き skip で
+      # 凍結し、ここに無い「新規の fail」は plan をブロックする（ラチェット運用）。
+      - name: Checkov IaC scan             # plan 時のみ
         if: inputs.command == 'plan'
-        continue-on-error: true
-        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        uses: bridgecrewio/checkov-action@a6a5c23963b9d127020ae43a959cd5d8eefc94c7 # v12.3106.0
         with:
           directory: terraform
+          config_file: .checkov.yaml
           download_external_modules: true
-          soft_fail: true
           quiet: true
 
       - name: Configure AWS credentials
