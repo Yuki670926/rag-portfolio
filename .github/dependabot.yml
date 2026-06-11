@@ -1,0 +1,9 @@
+# GitHub Actions の更新 PR を自動化（action は SHA 固定運用のため、更新は必ず PR 経由）
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
