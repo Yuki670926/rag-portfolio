@@ -36,7 +36,7 @@ jobs:
       - name: Checkov IaC scan             # plan 時のみ。非ブロッキングのアドバイザリ（findings/エラーで plan を止めない）
         if: inputs.command == 'plan'
         continue-on-error: true
-        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        uses: bridgecrewio/checkov-action@a6a5c23963b9d127020ae43a959cd5d8eefc94c7 # v12.3106.0
         with:
           directory: terraform
           download_external_modules: true
