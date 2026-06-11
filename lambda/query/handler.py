@@ -318,8 +318,18 @@ def handler(event, context):
                 "body": json.dumps({"error": "質問が空です"})
             }
 
-        # user_idをLambda Authorizerのcontextから取得
-        user_id = event.get("requestContext", {}).get("authorizer", {}).get("user_id", "anonymous")
+        # user_id は Cognito authorizer の claims から取得（/query は COGNITO_USER_POOLS。
+        # sub はプール内で不変・一意）。取得できない場合に既定値へフォールバックすると
+        # 全ユーザーの会話履歴が同一パーティションに混在し、直近履歴として他人の Q&A が
+        # プロンプトに混入するため、fail-closed で 401 を返す。
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+        user_id = claims.get("sub", "")
+        if not user_id:
+            return {
+                "statusCode": 401,
+                "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"error": "認証情報を取得できません。再ログインしてください。"}, ensure_ascii=False)
+            }
 
         # セッション管理
         session_id = get_session_id(user_id)

@@ -129,7 +129,7 @@ def get_embedding(text):
 
 def start_kb_sync():
     """KB のデータ同期ジョブを開始（fire-and-forget）。KB が S3 を差分同期するため、
-    作成・削除どちらのイベントでもこの1本で反映される。実行中なら次の同期に任せて成功扱い。"""
+    作成・削除どちらのイベントでもこの1本で反映される。"""
     if not KNOWLEDGE_BASE_ID or not DATA_SOURCE_ID:
         raise RuntimeError("KB IDs not configured")
     try:
@@ -142,8 +142,41 @@ def start_kb_sync():
         metrics.add_metric(name="KBIngestionStarted", unit=MetricUnit.Count, value=1)
         return f"job:{job_id}"
     except bedrock_agent_client.exceptions.ConflictException:
-        logger.warning("Ingestion job already in progress; will be picked up by next sync")
-        return "job:in-progress"
+        # 実行中ジョブと衝突。定期同期は存在しない（トリガは S3 イベントのみ）ため
+        # 「次の同期に任せる」と、実行中ジョブが本オブジェクトを拾わなかった場合に
+        # 取り込み漏れが恒久化する。raise して非同期リトライ（2回・計約3分）で
+        # 再キックし、それでも衝突が続くなら DLQ で可視化する。
+        # （リトライで precise 経路も再実行されるが、全処理冪等なので安全。
+        #   コストは埋め込み再計算のみ＝取り込み漏れの無音化より安い、の判断。）
+        logger.warning("Ingestion job already in progress; raising for async retry")
+        raise
+
+def put_fast_flag(key, job_ref):
+    # fast(KB) 側の per-doc 記録：「この文書のイベントで起動した同期ジョブ id」。
+    # KB はバケット一括の同期ジョブ方式で、ジョブのグローバル状態だけでは
+    # 「この文書が索引済みか」を判定できない（アップロード直後の /status polling が
+    # 前回ジョブの COMPLETE を拾う偽陽性レースがある）ため、文書→ジョブの対応を残す。
+    # precise のフラグと同じテーブルに "<pdf>#fast" キーで同居（失敗しても付帯情報）。
+    if not PDF_INDEXES_TABLE:
+        return
+    try:
+        dynamodb.Table(PDF_INDEXES_TABLE).put_item(Item={
+            "user_id": "shared",
+            "pdf_name": f"{os.path.basename(key)}#fast",
+            "job_id": job_ref.replace("job:", ""),
+            "started_at": int(time.time()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to write fast flag for {key}: {e}")
+
+def delete_fast_flag(key):
+    if not PDF_INDEXES_TABLE:
+        return
+    try:
+        dynamodb.Table(PDF_INDEXES_TABLE).delete_item(
+            Key={"user_id": "shared", "pdf_name": f"{os.path.basename(key)}#fast"})
+    except Exception as e:
+        logger.warning(f"Failed to delete fast flag for {key}: {e}")
 
 # ---------- precise 経路（OpenSearch 自前パイプライン） ----------
 
@@ -244,7 +277,14 @@ def handler(event, context):
 
     if VECTOR_STORE_TYPE in ("s3_vectors", "dual"):
         try:
-            results["fast"] = start_kb_sync()
+            job_ref = start_kb_sync()
+            # 文書→起動ジョブの対応を記録（/status の per-doc 判定用）。
+            # 削除イベントの文書は記録ごと消す（polling 対象から外れる）。
+            for _, key in created:
+                put_fast_flag(key, job_ref)
+            for _, key in removed:
+                delete_fast_flag(key)
+            results["fast"] = job_ref
         except Exception as e:
             logger.exception(f"fast(KB) path failed: {e}")
             results["fast"] = "error"
