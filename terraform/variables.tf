@@ -16,8 +16,13 @@ variable "account_id" {
 
 variable "vector_store_type" {
   type        = string
-  description = "ベクトルストアの種類（opensearch or s3_vectors）"
+  description = "ベクトルストア構成：s3_vectors（KB のみ）/ opensearch（自前のみ）/ dual（両方＝fast/高精度の二段検索）"
   default     = "s3_vectors"
+
+  validation {
+    condition     = contains(["s3_vectors", "opensearch", "dual"], var.vector_store_type)
+    error_message = "vector_store_type は s3_vectors / opensearch / dual のいずれかにしてください。"
+  }
 }
 
 variable "enable_private_networking" {

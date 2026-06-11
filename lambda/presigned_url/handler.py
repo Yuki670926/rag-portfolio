@@ -41,31 +41,27 @@ def get_status(event):
     if not pdf_name:
         return _resp(400, {"error": "pdf パラメータが必要です"})
 
-    # s3_vectors はベクトルストアが Bedrock KB の「一括取り込みジョブ」方式で、per-doc の
-    # ready フラグが無い。アップロードで起動した最新の取り込みジョブが COMPLETE なら、その
-    # 文書も検索可能とみなす（opensearch の per-doc ready と UX 上のパリティを取る）。
-    if VECTOR_STORE_TYPE == "s3_vectors":
-        return _status_s3_vectors()
+    # ストア別の readiness：
+    #   fast    = KB（S3 Vectors）。一括同期ジョブ方式のため「最新ジョブが COMPLETE」で判定
+    #   precise = OpenSearch。ingest が pdf_indexes に書く per-doc フラグで判定
+    # 後方互換：トップレベル ready は「最初に質問可能になる方」（fast 優先）。
+    stores = {}
+    if VECTOR_STORE_TYPE in ("s3_vectors", "dual"):
+        stores["fast"] = _fast_ready()
+    if VECTOR_STORE_TYPE in ("opensearch", "dual"):
+        stores["precise"] = _precise_ready(pdf_name)
 
-    # opensearch：ingest が pdf_indexes に書く per-doc の ready フラグを見る。
-    if not PDF_INDEXES_TABLE:
-        return _resp(500, {"error": "status backend not configured"})
-    try:
-        item = dynamodb.Table(PDF_INDEXES_TABLE).get_item(
-            Key={"user_id": "shared", "pdf_name": pdf_name}
-        ).get("Item")
-        if item and item.get("status") == "ready":
-            return _resp(200, {"ready": True, "chunks": int(item.get("chunks", 0))})
-        return _resp(200, {"ready": False})
-    except ClientError as e:
-        print(f"DynamoDB Error: {str(e)}")
-        return _resp(500, {"error": str(e)})
+    primary = stores.get("fast") or stores.get("precise") or {"ready": True}
+    body = {"ready": primary.get("ready", False), "stores": stores}
+    if "chunks" in primary:
+        body["chunks"] = primary["chunks"]  # 旧フロント互換（opensearch 単独時）
+    return _resp(200, body)
 
 
-def _status_s3_vectors():
+def _fast_ready():
     # 最新の取り込みジョブが COMPLETE なら ready。IN_PROGRESS/STARTING の間は not ready。
     if not (KNOWLEDGE_BASE_ID and DATA_SOURCE_ID):
-        return _resp(200, {"ready": True})  # KB 未設定時はブロックしない
+        return {"ready": True}  # KB 未設定時はブロックしない
     try:
         jobs = bedrock_agent.list_ingestion_jobs(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
@@ -73,12 +69,25 @@ def _status_s3_vectors():
             sortBy={"attribute": "STARTED_AT", "order": "DESCENDING"},
             maxResults=1,
         ).get("ingestionJobSummaries", [])
-        if jobs and jobs[0].get("status") == "COMPLETE":
-            return _resp(200, {"ready": True})
-        return _resp(200, {"ready": False})
+        return {"ready": bool(jobs and jobs[0].get("status") == "COMPLETE")}
     except Exception as e:
-        print(f"s3_vectors status error: {str(e)}")
-        return _resp(200, {"ready": False})
+        print(f"fast status error: {str(e)}")
+        return {"ready": False}
+
+
+def _precise_ready(pdf_name):
+    if not PDF_INDEXES_TABLE:
+        return {"ready": False}
+    try:
+        item = dynamodb.Table(PDF_INDEXES_TABLE).get_item(
+            Key={"user_id": "shared", "pdf_name": pdf_name}
+        ).get("Item")
+        if item and item.get("status") == "ready":
+            return {"ready": True, "chunks": int(item.get("chunks", 0))}
+        return {"ready": False}
+    except ClientError as e:
+        print(f"DynamoDB Error: {str(e)}")
+        return {"ready": False}
 
 
 def create_presigned(event):
