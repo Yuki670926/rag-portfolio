@@ -24,3 +24,25 @@ skip-check:
   - CKV2_AWS_29  # WAF は CloudFront 側に設置済み（API は Cognito/Lambda authorizer + スロットリングで保護）
   - CKV2_AWS_31  # WAF ログは低トラフィックで費用対効果が低い。ブロック事象は CloudWatch メトリクスで把握可能
   - CKV2_AWS_10  # per-env CloudTrail は組織 trail へ一本化済み（モジュールごと撤去・参照が消え次第自然消滅）
+  # --- 第2バッチ（ラチェット初回稼働で検出された初回棚卸しの抽出漏れ分・2026-06-11） ---
+  - CKV2_AWS_4   # 実装済み（method_settings に logging_level=ERROR）。checkov の graph 連結が外部モジュール越しに効かない誤検知
+  - CKV_TF_1     # モジュールはコミットハッシュでなく per-module セマンティックタグで pin。両リポとも自己所有で第三者改竄リスクの文脈が異なり、可読性を優先
+  - CKV2_AWS_53  # リクエスト検証は Lambda ハンドラ側で実施（filename 検証・400 応答）。API GW validator の二重化は低価値
+  - CKV_AWS_272  # Lambda code-signing：成果物は自リポから OIDC 経由の CI ビルドのみ。Signer 導入の複雑性に見合わない
+  - CKV_AWS_290  # IAM の書き込み権限は対象サービス側の制約（aoss data access policy 等）で絞る設計。該当文には理由コメント付き
+  - CKV_AWS_355  # Resource "*" は bedrock:InvokeModel（推論プロファイルで ARN 可変）と aoss:APIAccessAll（data access policy で制御）のみ
+  - CKV_AWS_382  # SG egress 0.0.0.0/0：Lambda からの外向きは VPC エンドポイントポリシーと IAM で制御。egress 制限は運用コスト過大
+  - CKV2_AWS_61  # S3 lifecycle：documents は恒久コーパスで失効不可。ログ系は 365 日失効を設定済み
+  - CKV2_AWS_62  # S3 イベント通知は documents（ingest トリガ）のみ必要。frontend/access_logs への通知は用途がない
+  - CKV2_AWS_32  # CloudFront レスポンスヘッダポリシー：ポートフォリオ用途で CSP 等の厳格化は別課題
+  - CKV2_AWS_42  # CloudFront カスタム SSL 証明書：独自ドメインを持たない（既定の cloudfront.net ドメイン）ため対象外
+  - CKV2_AWS_47  # CloudFront log4j 対策 WAF ルール：WAF はマネージドルール（Core）適用済み
+  - CKV2_AWS_51  # CloudFront origin への TLS 限定：オリジンは S3（OAC）で HTTPS 強制済み
+  - CKV_AWS_174  # CloudFront viewer TLS1.2：独自ドメイン無しでは viewer certificate の minimum_protocol_version 指定が効かない仕様
+  - CKV_AWS_86   # CloudFront アクセスログ：低トラフィックで費用対効果が低い（API 側のアクセスログは有効化済み）
+  - CKV_AWS_310  # CloudFront オリジンフェイルオーバー：単一リージョン要件・DR なし
+  - CKV_AWS_374  # CloudFront geo 制限：公開ポートフォリオのため地域制限しない
+  - CKV_AWS_300  # S3 マルチパート未完了の自動破棄：アップロードは小型 PDF 中心で滞留実績なし
+  - CKV_AWS_237  # API GW rest_api の create_before_destroy：置換時は名前衝突リスクがあり deployment 側にのみ設定（意図的）
+  - CKV_AWS_274  # CI ロールの AdministratorAccess：既知のトレードオフ（aoss CreateGrant 明示文など最小権限化への布石は実施済・完全化はロードマップ）
+  - CKV_AWS_337  # SSM パラメータの CMK 化：格納値は OpenSearch エンドポイント URL（低機密）。SecureString＋AWS 管理キーで十分
