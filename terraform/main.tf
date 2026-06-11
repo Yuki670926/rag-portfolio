@@ -248,6 +248,8 @@ module "kms" {
   # aoss 鍵の grant 経路を CI ロールに明示許可（AdministratorAccess への暗黙依存を解消。
   # ロール ARN は循環回避のため構築文字列で参照＝github_actions モジュールに依存を張らない）
   aoss_grant_principal_arns = ["arn:aws:iam::${var.account_id}:role/${local.project_name}-github-actions-role"]
+  # per-env CloudTrail の組織 trail 一本化に伴い専用 CMK も撤去（7日の削除待機後に消滅）
+  create_cloudtrail_key = false
 }
 
 module "waf" {
@@ -279,15 +281,7 @@ removed {
   }
 }
 
-# 【移行中】per-env trail は組織 trail と記録範囲が100%重複し、管理イベントの
-# 2コピー目として課金されるため組織 trail に一本化する（実測: dev だけで月換算 ~$5）。
-# force_destroy=true は次のリリースでモジュールごと撤去するための準備
-# （同一イベントは組織 trail に記録済みのため監査ログは失われない）。
-module "cloudtrail" {
-  source        = "github.com/Yuki670926/rag-portfolio-modules//cloudtrail?ref=v2.2.34"
-  project_name  = local.project_name
-  account_id    = var.account_id
-  aws_region    = var.aws_region
-  kms_key_arn   = module.kms.cloudtrail_kms_key_arn
-  force_destroy = true
-}
+# （per-env CloudTrail は撤去済＝組織 trail に一本化。記録範囲が100%重複し
+#   管理イベントの2コピー目として課金されていたため（実測: dev だけで月換算 ~$5）。
+#   過去ログは専用 CMK のスケジュール削除に伴い読めなくなるが、同一イベントは
+#   組織 trail 側に記録済みのため監査証跡は失われない。）
