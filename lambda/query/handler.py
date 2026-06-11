@@ -16,7 +16,9 @@ bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name="ap-no
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
 ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
 
-VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+# 既定は s3_vectors：env は Terraform が必ず注入するため実害はないが、欠落という
+# 最悪ケースでも安価・常時即応側に倒す（IaC の fail-safe 既定と思想を一貫させる）
+VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "s3_vectors")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
 CONVERSATIONS_TABLE = os.environ.get("CONVERSATIONS_TABLE", "")
