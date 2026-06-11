@@ -44,7 +44,7 @@ locals {
 }
 
 module "vpc" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.31"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.37"
   project_name              = local.project_name
   enable_private_networking = var.enable_private_networking
   # aoss-data EP は OpenSearch 使用時のみ（s3_vectors では不要な固定費のため作らない）
@@ -136,7 +136,7 @@ module "knowledge_base" {
 }
 
 module "api_gateway" {
-  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.34"
+  source                       = "github.com/Yuki670926/rag-portfolio-modules//api_gateway?ref=v2.2.37"
   project_name                 = local.project_name
   cognito_user_pool_arn        = module.cognito.user_pool_arn
   query_lambda_arn             = module.lambda.query_lambda_arn

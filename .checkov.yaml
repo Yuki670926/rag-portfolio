@@ -1,0 +1,26 @@
+# checkov 設定：2026-06-11 の全件棚卸しで「受容」と判定したチェックを理由付きで凍結する。
+# 詳細な判定理由は docs/handoff/checkov棚卸し_2026-06-11.md（ローカル専用）を参照。
+# ここに無い新規 fail は CI（tf-plan / tf-apply の plan）でブロックされる（ラチェット運用）。
+skip-check:
+  # --- 誤検知（provider v4+ の分離リソースを checkov が連結できない） ---
+  - CKV_AWS_19   # 全バケット aws_s3_bucket_server_side_encryption_configuration で SSE-KMS 設定済み
+  - CKV_AWS_145  # 同上（KMS デフォルト暗号化は分離リソースで実装済み）
+  - CKV_AWS_18   # documents/frontend は aws_s3_bucket_logging で実装済み。access_logs 自身は自己参照になるため対象外
+  - CKV_AWS_21   # documents は versioning 済み（偽陽性）。ログ/成果物バケットは lifecycle 失効管理が適切で意図的に非設定
+  # --- 設計判断として受容（小規模・低トラフィック・単一CMK方針との整合） ---
+  - CKV_AWS_158  # CloudWatch Logs は AWS 管理キーで暗号化済み・秘匿値は Secrets Manager/SSM 管理でログに含まれない
+  - CKV_AWS_173  # Lambda 環境変数は非秘匿値のみ（秘匿は実行時に Secrets Manager/SSM から取得する設計）
+  - CKV_AWS_115  # reserved concurrency は同時実行枠を恒久控除し ingest のスロットリング副作用を生む。暴走対策は WAF/Budgets で多層化済み
+  - CKV_AWS_116  # DLQ は非同期起動の ingest に設置済み。同期 API（query/presigned/authorizer）と postauth は DLQ の対象外が適切
+  - CKV_AWS_50   # X-Ray は主要経路（ingest/query）で有効。authorizer/presigned/postauth は短命・低価値のため対象外
+  - CKV_AWS_117  # Lambda の VPC 配置は enable_private_networking（層3）でダイヤル化済み。常時 VPC は固定費要件がない
+  - CKV_AWS_144  # 単一リージョン要件・DR なし。正本は versioning + prevent_destroy + PITR の三段構えで保護
+  - CKV_AWS_26   # SNS はアラーム通知のみ（秘匿データなし）。CMK 化は鍵配線の複雑化に見合わない
+  - CKV_AWS_120  # API GW キャッシュは RAG の動的応答と相性が悪く、低トラフィックでは費用増のみ
+  - CKV_AWS_225  # 同上（method settings のキャッシュ）
+  - CKV_AWS_338  # ログ保持 30 日は意図的（コスト優先・調査用途には十分。1年保持は監査ログ＝組織 trail 側の責務）
+  - CKV2_AWS_5   # lambda SG は層3 OFF 時は未アタッチが正常（ダイヤル化の OFF 状態）
+  - CKV2_AWS_11  # VPC Flow Logs：層3 OFF 既定で VPC 内通信が無い。層3 検証時のみ点ける運用
+  - CKV2_AWS_29  # WAF は CloudFront 側に設置済み（API は Cognito/Lambda authorizer + スロットリングで保護）
+  - CKV2_AWS_31  # WAF ログは低トラフィックで費用対効果が低い。ブロック事象は CloudWatch メトリクスで把握可能
+  - CKV2_AWS_10  # per-env CloudTrail は組織 trail へ一本化済み（モジュールごと撤去・参照が消え次第自然消滅）
