@@ -38,6 +38,9 @@ provider "aws" {
 
 locals {
   project_name = "rp-${var.environment}"
+  # prod 強化の配線ポイント：データ保護（削除保護・prevent_destroy ガード・KMS 削除待機）は
+  # prod のみ ON。dev/stag は検証で作り直す自由を残す（環境差分はこの 1 点に集約）
+  is_prod = var.environment == "prod"
 }
 
 module "vpc" {
@@ -45,14 +48,14 @@ module "vpc" {
   project_name              = local.project_name
   enable_private_networking = var.enable_private_networking
   # aoss-data EP は OpenSearch 使用時のみ（s3_vectors では不要な固定費のため作らない）
-  aoss_endpoint_enabled     = contains(["opensearch", "dual"], var.vector_store_type)
+  aoss_endpoint_enabled = contains(["opensearch", "dual"], var.vector_store_type)
   # KB 系 EP / SSM EP も store 連動（層3 ON のとき「使う EP だけ」課金される）
-  kb_endpoints_enabled      = contains(["s3_vectors", "dual"], var.vector_store_type)
-  ssm_endpoint_enabled      = contains(["opensearch", "dual"], var.vector_store_type)
+  kb_endpoints_enabled = contains(["s3_vectors", "dual"], var.vector_store_type)
+  ssm_endpoint_enabled = contains(["opensearch", "dual"], var.vector_store_type)
 }
 
 module "s3" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.2.32"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.2.33"
   project_name      = local.project_name
   account_id        = var.account_id
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
@@ -63,15 +66,19 @@ module "s3" {
   client_id         = module.cognito.user_pool_client_id
   aws_region        = var.aws_region
   vector_store_type = var.vector_store_type
+  # documents（正本）の誤破壊ガード：prod のみ prevent_destroy ガードを作成
+  prevent_destroy = local.is_prod
 }
 
 module "cognito" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v2.2.26"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cognito?ref=v2.2.33"
   project_name = local.project_name
   environment  = var.environment
   admin_email  = "test@example.com"
   aws_region   = var.aws_region
   account_id   = var.account_id
+  # 登録ユーザー（再生成不能）の保護：prod のみ User Pool の置換 apply を明示エラーで停止
+  deletion_protection = local.is_prod
 }
 
 module "lambda" {
@@ -165,17 +172,17 @@ module "github_actions" {
 }
 
 module "presigned_url" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.26"
-  project_name          = local.project_name
-  documents_bucket_name = module.s3.documents_bucket_name
-  documents_bucket_arn  = module.s3.documents_bucket_arn
-  rest_api_id           = module.api_gateway.rest_api_id
-  root_resource_id      = module.api_gateway.root_resource_id
-  authorizer_id         = module.api_gateway.authorizer_id
-  execution_arn         = module.api_gateway.execution_arn
-  lambda_authorizer_id  = module.api_gateway.lambda_authorizer_id
-  cloudfront_domain     = module.cloudfront.distribution_domain_name
-  kms_key_arn           = module.kms.s3_kms_key_arn
+  source                 = "github.com/Yuki670926/rag-portfolio-modules//presigned_url?ref=v2.2.26"
+  project_name           = local.project_name
+  documents_bucket_name  = module.s3.documents_bucket_name
+  documents_bucket_arn   = module.s3.documents_bucket_arn
+  rest_api_id            = module.api_gateway.rest_api_id
+  root_resource_id       = module.api_gateway.root_resource_id
+  authorizer_id          = module.api_gateway.authorizer_id
+  execution_arn          = module.api_gateway.execution_arn
+  lambda_authorizer_id   = module.api_gateway.lambda_authorizer_id
+  cloudfront_domain      = module.cloudfront.distribution_domain_name
+  kms_key_arn            = module.kms.s3_kms_key_arn
   pdf_indexes_table_name = module.dynamodb.pdf_indexes_table_name
   pdf_indexes_table_arn  = module.dynamodb.pdf_indexes_table_arn
   vector_store_type      = var.vector_store_type
@@ -198,9 +205,11 @@ module "cloudwatch" {
 }
 
 module "dynamodb" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v2.2.14"
+  source       = "github.com/Yuki670926/rag-portfolio-modules//dynamodb?ref=v2.2.33"
   project_name = local.project_name
   kms_key_arn  = module.kms.s3_kms_key_arn
+  # 会話履歴等（正本）の保護：prod のみ DeleteTable を API レベルで拒否
+  deletion_protection = local.is_prod
 }
 
 module "ssm" {
@@ -222,12 +231,14 @@ module "dlq_ingest" {
 
 
 module "kms" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.30"
+  source = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.33"
   # aoss 用 CMK は OpenSearch 使用時のみ作成（全データストア CMK 統一・s3_vectors では不要な$1/月を回避）
   create_aoss_key = contains(["opensearch", "dual"], var.vector_store_type)
-  project_name = local.project_name
-  aws_region   = var.aws_region
-  account_id   = var.account_id
+  project_name    = local.project_name
+  aws_region      = var.aws_region
+  account_id      = var.account_id
+  # 正本を抱える s3 鍵の削除待機（取消猶予）：prod は 30 日・dev/stag は最短 7 日
+  s3_key_deletion_window_in_days = local.is_prod ? 30 : 7
 }
 
 module "waf" {
