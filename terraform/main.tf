@@ -41,15 +41,18 @@ locals {
 }
 
 module "vpc" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.28"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//vpc?ref=v2.2.31"
   project_name              = local.project_name
   enable_private_networking = var.enable_private_networking
   # aoss-data EP は OpenSearch 使用時のみ（s3_vectors では不要な固定費のため作らない）
-  aoss_endpoint_enabled     = var.vector_store_type == "opensearch"
+  aoss_endpoint_enabled     = contains(["opensearch", "dual"], var.vector_store_type)
+  # KB 系 EP / SSM EP も store 連動（層3 ON のとき「使う EP だけ」課金される）
+  kb_endpoints_enabled      = contains(["s3_vectors", "dual"], var.vector_store_type)
+  ssm_endpoint_enabled      = contains(["opensearch", "dual"], var.vector_store_type)
 }
 
 module "s3" {
-  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.1.3"
+  source            = "github.com/Yuki670926/rag-portfolio-modules//s3?ref=v2.2.32"
   project_name      = local.project_name
   account_id        = var.account_id
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
@@ -59,6 +62,7 @@ module "s3" {
   user_pool_id      = module.cognito.user_pool_id
   client_id         = module.cognito.user_pool_client_id
   aws_region        = var.aws_region
+  vector_store_type = var.vector_store_type
 }
 
 module "cognito" {
@@ -71,7 +75,7 @@ module "cognito" {
 }
 
 module "lambda" {
-  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.26"
+  source                    = "github.com/Yuki670926/rag-portfolio-modules//lambda?ref=v2.2.31"
   project_name              = local.project_name
   documents_bucket_arn      = module.s3.documents_bucket_arn
   aws_region                = var.aws_region
@@ -94,7 +98,7 @@ module "lambda" {
 }
 
 module "opensearch" {
-  count                     = var.vector_store_type == "opensearch" ? 1 : 0
+  count                     = contains(["opensearch", "dual"], var.vector_store_type) ? 1 : 0
   source                    = "github.com/Yuki670926/rag-portfolio-modules//opensearch?ref=v2.2.30"
   project_name              = local.project_name
   ingest_lambda_role_arn    = module.lambda.ingest_lambda_role_arn
@@ -105,14 +109,14 @@ module "opensearch" {
 }
 
 module "s3_vectors" {
-  count        = var.vector_store_type == "s3_vectors" ? 1 : 0
+  count        = contains(["s3_vectors", "dual"], var.vector_store_type) ? 1 : 0
   source       = "github.com/Yuki670926/rag-portfolio-modules//s3_vectors?ref=v2.2.1"
   project_name = local.project_name
   kms_key_arn  = module.kms.s3_kms_key_arn
 }
 
 module "knowledge_base" {
-  count                = var.vector_store_type == "s3_vectors" ? 1 : 0
+  count                = contains(["s3_vectors", "dual"], var.vector_store_type) ? 1 : 0
   source               = "github.com/Yuki670926/rag-portfolio-modules//knowledge_base?ref=v2.2.2"
   project_name         = local.project_name
   account_id           = var.account_id
@@ -200,7 +204,7 @@ module "dynamodb" {
 }
 
 module "ssm" {
-  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v2.2.6"
+  source                = "github.com/Yuki670926/rag-portfolio-modules//ssm?ref=v2.2.31"
   project_name          = local.project_name
   environment           = var.environment
   vector_store_endpoint = try(module.opensearch[0].collection_endpoint, "")
@@ -220,7 +224,7 @@ module "dlq_ingest" {
 module "kms" {
   source       = "github.com/Yuki670926/rag-portfolio-modules//kms?ref=v2.2.30"
   # aoss 用 CMK は OpenSearch 使用時のみ作成（全データストア CMK 統一・s3_vectors では不要な$1/月を回避）
-  create_aoss_key = (var.vector_store_type == "opensearch")
+  create_aoss_key = contains(["opensearch", "dual"], var.vector_store_type)
   project_name = local.project_name
   aws_region   = var.aws_region
   account_id   = var.account_id

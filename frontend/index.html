@@ -41,6 +41,9 @@
     .user .message-bubble { background: #232f3e; color: white; border-bottom-right-radius: 4px; }
     .assistant .message-bubble { background: #f0f0f0; color: #333; border-bottom-left-radius: 4px; }
     .message-sources { font-size: 12px; color: #888; margin-top: 4px; }
+    .mode-toggle { display: flex; gap: 6px; padding: 10px 16px 0; }
+    .mode-btn { padding: 5px 14px; border-radius: 14px; border: 1px solid #ddd; background: white; cursor: pointer; font-size: 12.5px; color: #555; }
+    .mode-btn.active { background: #232f3e; color: white; border-color: #232f3e; }
     .chat-input { display: flex; gap: 8px; padding: 16px; border-top: 1px solid #eee; }
     .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
     .chat-input button { padding: 10px 20px; background: #ff9900; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
@@ -105,6 +108,10 @@
             <div class="message-bubble">こんにちは！アップロードされたドキュメントについて質問してください。</div>
           </div>
         </div>
+        <div class="mode-toggle" id="modeToggle" style="display:none">
+          <button id="modeFast" class="mode-btn active" onclick="setMode('fast')">⚡ ふつう（高速）</button>
+          <button id="modePrecise" class="mode-btn" onclick="setMode('precise')">🎯 高精度（ハイブリッド検索）</button>
+        </div>
         <div class="chat-input">
           <input type="text" id="questionInput" placeholder="質問を入力してください..." onkeypress="handleKeyPress(event)" />
           <button id="sendBtn" onclick="sendQuestion()">送信</button>
@@ -145,10 +152,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   loginBtn.disabled = true;
   await loadConfig();
   loginBtn.disabled = false;
+  // 二刀流（dual）構成のときだけ検索モードのトグルを表示
+  if (CONFIG.VECTOR_STORE_TYPE === "dual") {
+    document.getElementById("modeToggle").style.display = "flex";
+  }
 });
+
+  function setMode(m) {
+    searchMode = m;
+    document.getElementById("modeFast").classList.toggle("active", m === "fast");
+    document.getElementById("modePrecise").classList.toggle("active", m === "precise");
+  }
 
   let idToken = null;
   let currentUser = null;
+  let searchMode = "fast";   // fast | precise（dual 構成のときのみ UI に出る）
   const loadingTimers = {};  // ローディングメッセージごとの経過/ステージ更新タイマー
 
   // ========== 認証 ==========
@@ -236,7 +254,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           "Content-Type": "application/json",
           "Authorization": idToken
         },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, mode: searchMode })
       });
       removeMessage(loadingId);
 
@@ -249,7 +267,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
       const data = await res.json();
       if (data.answer) {
-        addMessage("assistant", data.answer, data.sources);
+        addMessage("assistant", data.answer, data.sources, { mode: data.mode, fallback: data.fallback });
       } else {
         addMessage("assistant", "エラーが発生しました: " + (data.error || "不明なエラー"));
       }
@@ -267,10 +285,17 @@ window.addEventListener('DOMContentLoaded', async () => {
     return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  function addMessage(role, text, sources) {
+  function addMessage(role, text, sources, meta) {
     const messages = document.getElementById("chatMessages");
     const div = document.createElement("div");
     div.className = `message ${role}`;
+    let metaHtml = "";
+    if (meta && meta.mode && CONFIG.VECTOR_STORE_TYPE === "dual") {
+      const badge = meta.mode === "precise" ? "🎯 高精度" : "⚡ ふつう";
+      const note = meta.fallback
+        ? "（高精度は準備中のため通常検索で回答しました。まもなく利用可能になります）" : "";
+      metaHtml = `<div class="message-sources">${badge}で回答${escapeHtml(note)}</div>`;
+    }
     const sourcesHtml = sources && sources.length > 0
       ? `<div class="message-sources">📎 出典: ${sources.map(escapeHtml).join(", ")}</div>` : "";
     div.innerHTML = `<div class="message-bubble">${escapeHtml(text).replace(/\n/g, "<br>")}</div>${sourcesHtml}`;

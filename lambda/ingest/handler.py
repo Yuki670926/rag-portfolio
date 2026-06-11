@@ -20,6 +20,9 @@ bedrock_agent_client = boto3.client("bedrock-agent", region_name="ap-northeast-1
 ssm_client = boto3.client("ssm", region_name="ap-northeast-1")
 dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
 
+# vector_store_type: s3_vectors（KB マネージド経路のみ）/ opensearch（自前経路のみ）/
+# dual（両方＝fast/高精度の二段検索）。正本は常に S3 の PDF で、両ストアは
+# 冪等に再生成できる派生インデックス（dual-write アンチパターンには該当しない）。
 VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
@@ -69,25 +72,41 @@ def get_opensearch_client(endpoint):
     )
 
 def ensure_index(client):
-    if not client.indices.exists(INDEX_NAME):
-        client.indices.create(
-            index=INDEX_NAME,
-            body={
-                "settings": {"index.knn": True},
-                "mappings": {
-                    "properties": {
-                        "embedding": {
-                            "type": "knn_vector",
-                            "dimension": 1024
-                        },
-                        "text": {"type": "text"},
-                        "source": {"type": "keyword"},
-                        "chunk_index": {"type": "integer"}
-                    }
-                }
-            }
-        )
-        logger.info(f"Index {INDEX_NAME} created")
+    if client.indices.exists(INDEX_NAME):
+        return
+    mappings = {
+        "properties": {
+            "embedding": {"type": "knn_vector", "dimension": 1024},
+            "text": {"type": "text"},
+            "source": {"type": "keyword"},   # term 検索で upsert/delete するため keyword
+            "chunk_index": {"type": "integer"}
+        }
+    }
+    # BM25（高精度モードのハイブリッド検索）の日本語品質のため kuromoji を試行。
+    # Serverless で未サポートの場合は standard アナライザにフォールバック（英字・型番は拾える）。
+    try:
+        client.indices.create(index=INDEX_NAME, body={
+            "settings": {
+                "index.knn": True,
+                "analysis": {"analyzer": {"ja": {
+                    "type": "custom",
+                    "tokenizer": "kuromoji_tokenizer",
+                    "filter": ["kuromoji_baseform", "lowercase"]
+                }}}
+            },
+            "mappings": {**mappings, "properties": {
+                **mappings["properties"],
+                "text": {"type": "text", "analyzer": "ja"}
+            }}
+        })
+        logger.info(f"Index {INDEX_NAME} created (kuromoji)")
+    except Exception as e:
+        logger.warning(f"kuromoji index creation failed, falling back to standard: {e}")
+        client.indices.create(index=INDEX_NAME, body={
+            "settings": {"index.knn": True},
+            "mappings": mappings
+        })
+        logger.info(f"Index {INDEX_NAME} created (standard)")
 
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     words = text.split()
@@ -106,14 +125,13 @@ def get_embedding(text):
     body = json.loads(response["body"].read())
     return body["embedding"]
 
-def start_kb_ingestion():
-    """Bedrock Knowledge Base のデータ取り込みジョブを開始する（非同期）。
-    KBがS3からPDFを読み、チャンキング・埋め込み・S3 Vectors投入を実行する。
-    ジョブの完了は待たない（fire-and-forget）。"""
-    if not KNOWLEDGE_BASE_ID or not DATA_SOURCE_ID:
-        logger.error("KNOWLEDGE_BASE_ID / DATA_SOURCE_ID not configured")
-        return {"statusCode": 500, "body": "KB IDs not configured"}
+# ---------- fast 経路（Bedrock KB / S3 Vectors） ----------
 
+def start_kb_sync():
+    """KB のデータ同期ジョブを開始（fire-and-forget）。KB が S3 を差分同期するため、
+    作成・削除どちらのイベントでもこの1本で反映される。実行中なら次の同期に任せて成功扱い。"""
+    if not KNOWLEDGE_BASE_ID or not DATA_SOURCE_ID:
+        raise RuntimeError("KB IDs not configured")
     try:
         response = bedrock_agent_client.start_ingestion_job(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
@@ -122,74 +140,128 @@ def start_kb_ingestion():
         job_id = response["ingestionJob"]["ingestionJobId"]
         logger.info(f"Started KB ingestion job: {job_id}")
         metrics.add_metric(name="KBIngestionStarted", unit=MetricUnit.Count, value=1)
-        return {"statusCode": 200, "body": f"Ingestion job started: {job_id}"}
+        return f"job:{job_id}"
     except bedrock_agent_client.exceptions.ConflictException:
-        # 既に同期ジョブが実行中。fire-and-forget方針のため、
-        # 次回アップロードまたは手動同期で取り込まれるので警告ログのみ。
-        logger.warning("Ingestion job already in progress; skipping this trigger")
-        return {"statusCode": 200, "body": "Ingestion already in progress"}
+        logger.warning("Ingestion job already in progress; will be picked up by next sync")
+        return "job:in-progress"
+
+# ---------- precise 経路（OpenSearch 自前パイプライン） ----------
+
+def delete_document_chunks(client, key):
+    """同一 source のチャンクを検索して個別削除。
+    （Serverless は delete_by_query が使えない可能性があるため search+delete で実装。
+      カスタム文書IDもベクトル検索コレクションでは保証されないため依存しない。）"""
+    deleted = 0
+    while True:
+        resp = client.search(index=INDEX_NAME, body={
+            "size": 100, "_source": False,
+            "query": {"term": {"source": key}}
+        })
+        hits = resp["hits"]["hits"]
+        if not hits:
+            break
+        for h in hits:
+            client.delete(index=INDEX_NAME, id=h["_id"])
+            deleted += 1
+    if deleted:
+        logger.info(f"Deleted {deleted} old chunks for {key}")
+    return deleted
+
+def upsert_document(client, bucket, key):
+    """upsert：旧チャンク削除 → 抽出 → チャンク → 埋め込み → 索引。
+    再アップロード（上書き）でもチャンクが重複しない。"""
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    reader = PdfReader(BytesIO(response["Body"].read()))
+    full_text = ""
+    for page in reader.pages:
+        full_text += (page.extract_text() or "") + "\n"
+    chunks = chunk_text(full_text)
+    logger.info(f"{key}: {len(chunks)} chunks")
+
+    delete_document_chunks(client, key)
+    for i, chunk in enumerate(chunks):
+        doc = {
+            "text": chunk,
+            "embedding": get_embedding(chunk),
+            "source": key,
+            "chunk_index": i
+        }
+        client.index(index=INDEX_NAME, body=doc)
+    return len(chunks)
+
+def put_ready_flag(key, chunks):
+    # precise（OpenSearch）側の per-doc 準備完了フラグ。失敗しても本体は成功扱い（付帯情報）。
+    if not PDF_INDEXES_TABLE:
+        return
+    try:
+        dynamodb.Table(PDF_INDEXES_TABLE).put_item(Item={
+            "user_id": "shared",
+            "pdf_name": os.path.basename(key),
+            "status": "ready",
+            "chunks": chunks,
+            "indexed_at": int(time.time()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to write readiness flag for {key}: {e}")
+
+def delete_ready_flag(key):
+    if not PDF_INDEXES_TABLE:
+        return
+    try:
+        dynamodb.Table(PDF_INDEXES_TABLE).delete_item(
+            Key={"user_id": "shared", "pdf_name": os.path.basename(key)})
+    except Exception as e:
+        logger.warning(f"Failed to delete readiness flag for {key}: {e}")
+
+# ---------- handler ----------
 
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def handler(event, context):
-    if VECTOR_STORE_TYPE == "opensearch":
-        endpoint = get_vector_store_endpoint()
-        if not endpoint:
-            logger.error("OpenSearch endpoint not found in SSM")
-            return {"statusCode": 500, "body": "OpenSearch endpoint not configured"}
-        os_client = get_opensearch_client(endpoint)
-    elif VECTOR_STORE_TYPE == "s3_vectors":
-        # S3 Vectors + Bedrock KB: KBが取り込みを行うため、同期ジョブを開始するだけ。
-        # PDF抽出・チャンク・埋め込み・投入はKBが実行する（自前パイプライン不要）。
-        return start_kb_ingestion()
-    else:
-        logger.error(f"Unknown vector store type: {VECTOR_STORE_TYPE}")
-        return {"statusCode": 500, "body": "Unknown vector store type"}
-
-    for record in event["Records"]:
+    # S3 イベント（作成/削除）を仕分け
+    created, removed = [], []
+    for record in event.get("Records", []):
+        name = record.get("eventName", "")
         bucket = record["s3"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
-        logger.info(f"Processing: s3://{bucket}/{key}")
+        if name.startswith("ObjectCreated"):
+            created.append((bucket, key))
+        elif name.startswith("ObjectRemoved"):
+            removed.append((bucket, key))
+    logger.info(f"event: created={[k for _, k in created]} removed={[k for _, k in removed]}")
 
-        response = s3_client.get_object(Bucket=bucket, Key=key)
-        pdf_bytes = response["Body"].read()
-        reader = PdfReader(BytesIO(pdf_bytes))
-        full_text = ""
-        for page in reader.pages:
-            full_text += page.extract_text() + "\n"
+    # 両経路を分離した try/except で実行：片方の障害がもう片方を巻き込まない。
+    # 片方でも失敗したら最後に例外を上げ、Lambda 非同期リトライ（→DLQ）に乗せる。
+    # 全処理が冪等（KB=差分同期 / OpenSearch=upsert・delete）なので再実行は安全。
+    results = {}
 
-        chunks = chunk_text(full_text)
-        logger.info(f"Total chunks: {len(chunks)}")
+    if VECTOR_STORE_TYPE in ("s3_vectors", "dual"):
+        try:
+            results["fast"] = start_kb_sync()
+        except Exception as e:
+            logger.exception(f"fast(KB) path failed: {e}")
+            results["fast"] = "error"
 
-        ensure_index(os_client)
-        for i, chunk in enumerate(chunks):
-            embedding = get_embedding(chunk)
-            doc = {
-                "text": chunk,
-                "embedding": embedding,
-                "source": key,
-                "chunk_index": i
-            }
-            os_client.index(index=INDEX_NAME, body=doc)
-            logger.info(f"Indexed chunk {i}: {chunk[:50]}...")
+    if VECTOR_STORE_TYPE in ("opensearch", "dual"):
+        try:
+            endpoint = get_vector_store_endpoint()
+            if not endpoint:
+                raise RuntimeError("OpenSearch endpoint not configured")
+            os_client = get_opensearch_client(endpoint)
+            ensure_index(os_client)
+            for bucket, key in created:
+                n = upsert_document(os_client, bucket, key)
+                put_ready_flag(key, n)
+            for _, key in removed:
+                delete_document_chunks(os_client, key)
+                delete_ready_flag(key)
+            results["precise"] = "ok"
+        except Exception as e:
+            logger.exception(f"precise(OpenSearch) path failed: {e}")
+            results["precise"] = "error"
 
-        # 索引化完了フラグを DynamoDB pdf_indexes に記録（フロントの「準備完了」polling 用）。
-        # ドキュメントは現状グローバル共有のため user_id は定数 "shared"（マルチテナント化は別案件）。
-        # 失敗しても ingest 本体は成功扱い（フラグは付帯情報）。
-        if PDF_INDEXES_TABLE:
-            try:
-                pdf_name = os.path.basename(key)
-                dynamodb.Table(PDF_INDEXES_TABLE).put_item(Item={
-                    "user_id": "shared",
-                    "pdf_name": pdf_name,
-                    "status": "ready",
-                    "chunks": len(chunks),
-                    "indexed_at": int(time.time()),
-                })
-                logger.info(f"Readiness flag written: {pdf_name} (chunks={len(chunks)})")
-            except Exception as e:
-                logger.warning(f"Failed to write readiness flag for {key}: {e}")
-
-    return {"statusCode": 200, "body": "Ingestion complete"}
-
+    logger.info(f"ingest results: {results}")
+    if "error" in results.values():
+        raise RuntimeError(f"partial failure: {results}")
+    return {"statusCode": 200, "body": json.dumps(results)}
