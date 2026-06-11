@@ -134,6 +134,10 @@ def create_presigned(event):
         return _resp(400, {"error": "ファイル名が空です"})
     if not filename.endswith(".pdf"):
         return _resp(400, {"error": "PDFファイルのみアップロード可能です"})
+    # OpenSearch の _id（"documents/<filename>#<i>"）は 512 バイト上限。
+    # 超えると当該文書の索引が毎回失敗して DLQ 行きになるため入口で弾く。
+    if len(filename.encode("utf-8")) > 400:
+        return _resp(400, {"error": "ファイル名が長すぎます（400バイト以内にしてください）"})
 
     presigned_url = s3_client.generate_presigned_url(
         "put_object",
@@ -151,6 +155,10 @@ def create_presigned(event):
     # PUT 直後の初回 polling が「✅ 完了」を拾う偽陽性になるのを防ぐ。
     # 発行だけして PUT しなかった場合もフラグが消えるが、影響は /status の表示のみ
     # （索引と検索は無傷・次のアップロードで再生成される）。
+    # 既知の残存レース（許容）：同名文書の「先行 ingest」が実行中だと、その完了時に
+    # 旧版の ready が書き戻され偽陽性が狭い窓で再発し得る。表示のみの影響で、
+    # 新しい ingest の完了で自己解消するため、世代管理（uploaded_at 条件付き書き込み）は
+    # 必要になったら導入する。
     _clear_ready_flags(filename)
 
     return _resp(200, {

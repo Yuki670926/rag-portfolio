@@ -117,8 +117,11 @@ def _rrf_merge(rank_lists, k=60, top=TOP_K):
 
 def _search_opensearch_hybrid(question):
     """precise 経路：BM25（キーワード・略語/型番に強い）と kNN（意味検索）を
-    別々に実行し RRF で融合。接続失敗（コールド等）は None を返し、呼び出し側で
-    fast へフォールバックさせる。"""
+    別々に実行し RRF で融合。
+    返り値の規約：[] = 正常に0件（index 未作成＝文書ゼロの正常状態を含む）／
+    None = 真の障害（接続失敗・コールド timeout 等）。index_not_found を None に
+    丸めると「文書ゼロの新環境」で恒久 503 になるため、ここで区別する
+    （warmup が 404 を warm 扱いするのと同じ整理）。"""
     endpoint = get_vector_store_endpoint()
     if not endpoint:
         return None
@@ -135,6 +138,9 @@ def _search_opensearch_hybrid(question):
         })["hits"]["hits"]
         return _rrf_merge([knn, bm25])
     except Exception as e:
+        if "index_not_found" in str(e).lower():
+            logger.info("documents index not created yet (no documents); empty result")
+            return []
         logger.error(f"OpenSearch hybrid error: {str(e)}")
         return None
 

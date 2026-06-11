@@ -3,7 +3,8 @@ import os
 import time
 import boto3
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from botocore.exceptions import ClientError
 from pypdf import PdfReader
 from io import BytesIO
 from opensearchpy import OpenSearch, RequestsHttpConnection
@@ -106,11 +107,14 @@ def ensure_index(client):
         })
         logger.info(f"Index {INDEX_NAME} created (kuromoji)")
     except Exception as e:
+        # 実エラー文言の全文を記録（NextGen の拒否文言が下記語彙に合わない場合の調査用。
+        # 合わないと毎回 raise→DLQ で「index 永久未作成」になるが、無音化はしない）
+        logger.error(f"kuromoji index creation failed (raw): {e}")
         msg = str(e).lower()
         if "resource_already_exists" in msg:
             logger.info("Index already exists (parallel create); continuing")
             return
-        if not any(w in msg for w in ("kuromoji", "analyzer", "tokenizer")):
+        if not any(w in msg for w in ("kuromoji", "analyzer", "tokenizer", "analysis")):
             raise  # 一時障害（timeout/スロットル等）はフォールバックせずリトライへ
         logger.warning(f"kuromoji unsupported, falling back to standard: {e}")
         try:
@@ -152,7 +156,12 @@ def get_embedding(text):
 def _find_covering_job(event_time):
     """イベント発生時刻より後に開始されたジョブの id を返す（無ければ None）。
     S3 は強整合のため「イベント時刻より後に開始された一括同期ジョブ」は当該
-    オブジェクトを必ず走査対象に含む＝そのジョブが成果として使える。"""
+    オブジェクトを必ず走査対象に含む＝そのジョブが成果として使える。
+    条件は2つ：
+      (1) status が生きている（STARTING/IN_PROGRESS/COMPLETE）。FAILED/STOPPED を
+          カバー扱いすると「取り込み漏れの無音化」が再発するため除外し raise 側に倒す
+      (2) startedAt がイベント時刻＋2秒以降。S3 と Bedrock のクロックずれで
+          「実はイベント前に開始したジョブ」を誤ってカバー判定しないための安全マージン"""
     if event_time is None:
         return None
     try:
@@ -162,9 +171,11 @@ def _find_covering_job(event_time):
             sortBy={"attribute": "STARTED_AT", "order": "DESCENDING"},
             maxResults=5,
         ).get("ingestionJobSummaries", [])
+        threshold = event_time + timedelta(seconds=2)
         for j in jobs:
             started = j.get("startedAt")
-            if started and started >= event_time:
+            if (started and started >= threshold
+                    and j.get("status") in ("STARTING", "IN_PROGRESS", "COMPLETE")):
                 return j.get("ingestionJobId")
     except Exception as e:
         logger.warning(f"covering-job check failed (treated as not covered): {e}")
@@ -292,12 +303,18 @@ def upsert_document(client, bucket, key):
     return len(chunks)
 
 def object_exists(bucket, key):
-    """削除イベントの実行時点でオブジェクトが再作成されていないかの確認用。"""
+    """削除イベントの実行時点でオブジェクトが再作成されていないかの確認用。
+    「不存在」と断定するのは 404 のみ。スロットル等の一時障害まで False に丸めると、
+    生きている文書のチャンクを削除する方向（データ消失側）に倒れるため raise して
+    非同期リトライに任せる（s3:ListBucket 付与済みのため不存在は 404 で返る）。"""
     try:
         s3_client.head_object(Bucket=bucket, Key=key)
         return True
-    except Exception:
-        return False
+    except ClientError as e:
+        code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code == 404:
+            return False
+        raise
 
 def put_ready_flag(key, chunks):
     # precise（OpenSearch）側の per-doc 準備完了フラグ。失敗しても本体は成功扱い（付帯情報）。
