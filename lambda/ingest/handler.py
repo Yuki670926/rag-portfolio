@@ -25,7 +25,8 @@ dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-1")
 # vector_store_type: s3_vectors（KB マネージド経路のみ）/ opensearch（自前経路のみ）/
 # dual（両方＝fast/高精度の二段検索）。正本は常に S3 の PDF で、両ストアは
 # 冪等に再生成できる派生インデックス（dual-write アンチパターンには該当しない）。
-VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "opensearch")
+# 既定は s3_vectors（IaC の fail-safe 既定と統一。env 欠落時に高コスト側へ倒さない）
+VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "s3_vectors")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 DATA_SOURCE_ID = os.environ.get("DATA_SOURCE_ID", "")
 SSM_ENDPOINT_PARAM = os.environ.get("SSM_ENDPOINT_PARAM", "")
