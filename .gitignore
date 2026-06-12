@@ -153,3 +153,8 @@ docs/handoff/
 
 # CLAUDE.md はローカル専用で運用する方針（公開リポにコミットしない）。誤コミット防止。
 /CLAUDE.md
+
+# テスト用の venv・キャッシュ（ローカル専用。CI は requirements-dev.txt から都度作る）
+.venv/
+.pytest_cache/
+
