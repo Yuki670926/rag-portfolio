@@ -1,0 +1,13 @@
+# テスト用依存（本番 Lambda の layers/*/requirements.lock とは別物）。
+# 各ハンドラを import して単体テストするために必要な最小セット。
+# - aws-lambda-powertools は本番では Powertools Layer（python313:22）が供給するため
+#   layers/*/requirements.lock には含まれない。テストでは明示的に入れる。
+pytest>=8
+moto[dynamodb]>=5
+aws-lambda-powertools>=3
+aws-xray-sdk  # Powertools Tracer が import 時に要求（本番では Powertools Layer が同梱）
+boto3
+opensearch-py
+requests-aws4auth
+pypdf
+python-jose[cryptography]
