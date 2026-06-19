@@ -61,7 +61,7 @@ module "s3" {
   ingest_lambda_arn = module.lambda.ingest_lambda_arn
   cloudfront_domain = module.cloudfront.distribution_domain_name
   kms_key_arn       = module.kms.s3_kms_key_arn
-  api_url           = module.api_gateway.api_url
+  api_url           = "https://${module.cloudfront.distribution_domain_name}" # API も CloudFront 配下＝同一オリジン（CORS不要）
   user_pool_id      = module.cognito.user_pool_id
   client_id         = module.cognito.user_pool_client_id
   aws_region        = var.aws_region
@@ -153,12 +153,17 @@ module "api_gateway" {
 }
 
 module "cloudfront" {
-  source                               = "github.com/Yuki670926/rag-portfolio-modules//cloudfront?ref=v2.0.3"
+  source                               = "github.com/Yuki670926/rag-portfolio-modules//cloudfront?ref=v2.2.40"
   project_name                         = local.project_name
   frontend_bucket_id                   = module.s3.frontend_bucket_id
   frontend_bucket_arn                  = module.s3.frontend_bucket_arn
   frontend_bucket_regional_domain_name = module.s3.frontend_bucket_regional_domain_name
   web_acl_arn                          = module.waf.web_acl_arn
+  # API も同一ディストリビューション配下に（/query /upload /status を API GW オリジンへ）。
+  # 循環依存回避：ドメインは rest_api_id から構成・ステージは var.environment を直接使用
+  # （api_gateway の cloudfront_domain 利用は CORS リソースのみ＝rest_api 本体は CloudFront 非依存）。
+  api_gateway_domain = "${module.api_gateway.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com"
+  api_gateway_stage  = var.environment
 }
 
 module "github_actions" {
