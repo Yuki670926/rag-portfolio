@@ -79,10 +79,15 @@ def get_embedding(text):
     return body["embedding"]
 
 def _search_kb(question):
-    # fast 経路：Bedrock KB Retrieve（埋め込み生成・検索は KB 側で実行）
+    """fast 経路：Bedrock KB Retrieve（埋め込み生成・検索は KB 側で実行）。
+    返り値の規約は _search_opensearch_hybrid と対称：[] = 正常に0件／None = 真の障害。
+    障害を [] に丸めると、KB 停止中もプロンプトが「文書取得できず」扱いの 200 で返り、
+    Lambda Errors にも乗らず検索基盤の障害が完全に無音になる（設定漏れ・権限剥奪・
+    サービス障害を「文書が無い」と区別できない）ため、None で上げて呼び出し側で
+    503 にする。正常0件（retrievalResults が空）はこれまで通り [] を返す。"""
     if not KNOWLEDGE_BASE_ID:
         logger.error("KNOWLEDGE_BASE_ID not configured")
-        return []
+        return None
     try:
         response = bedrock_agent_runtime.retrieve(
             knowledgeBaseId=KNOWLEDGE_BASE_ID,
@@ -102,7 +107,7 @@ def _search_kb(question):
         return results
     except Exception as e:
         logger.error(f"KB Retrieve error: {str(e)}")
-        return []
+        return None
 
 
 def _rrf_merge(rank_lists, k=60, top=TOP_K):
@@ -150,9 +155,11 @@ def _search_opensearch_hybrid(question):
 def search_documents(question, mode="fast"):
     """構成とモードから実効バックエンドを決めて検索する。
     返り値: (contexts, used_mode, fallback)。contexts=None は「検索系の障害」
-    （opensearch 単独でフォールバック先が無いケース）＝呼び出し側で 503 にする。
+    （opensearch 単独／fast(KB) の障害／dual で両経路とも不可）＝呼び出し側で 503 にする。
       - 単独構成では構成側を優先（mode 指定は無視）
-      - dual の precise がコールド/障害のときは fast へ自動フォールバック"""
+      - dual の precise がコールド/障害のときは fast へ自動フォールバック
+        （fast 側も障害なら None が伝播して 503）。fast→precise の逆方向
+        フォールバックは未実装（precise はコールドがあり救済にならないため）"""
     if VECTOR_STORE_TYPE == "s3_vectors":
         return _search_kb(question), "fast", False
     if VECTOR_STORE_TYPE == "opensearch":
@@ -399,9 +406,11 @@ def handler(event, context):
             }, ensure_ascii=False)
         }
     except Exception as e:
+        # 例外詳細はログのみに残す。str(e) をそのまま返すとテーブル名・ARN 等の
+        # 内部情報がクライアントに漏れるため、応答は固定文言にする。
         logger.error(f"Error: {str(e)}")
         return {
             "statusCode": 500,
             "headers": {"Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": str(e)})
+            "body": json.dumps({"error": "内部エラーが発生しました。時間をおいて再度お試しください。"}, ensure_ascii=False)
         }

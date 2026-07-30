@@ -103,3 +103,66 @@ def test_opensearch_only_failure_returns_none(query_h, monkeypatch):
     monkeypatch.setattr(query_h, "_search_opensearch_hybrid", lambda q: None)
     ctx, mode, fb = query_h.search_documents("q", mode="precise")
     assert ctx is None
+
+
+# ---------- fast(KB) 経路の障害と正常0件の区別（無音障害の修正の固定） ----------
+
+def test_search_kb_failure_returns_none_not_empty(query_h, monkeypatch):
+    # KB Retrieve の例外は None（障害）。[] に丸めると「KB 停止中も 200 で
+    # 『該当情報なし』」になり検索基盤の障害が無音化するため、規約を固定する
+    class _Boom:
+        def retrieve(self, **kw):
+            raise RuntimeError("kb down")
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "kb-test")
+    monkeypatch.setattr(query_h, "bedrock_agent_runtime", _Boom())
+    assert query_h._search_kb("q") is None
+
+
+def test_search_kb_unconfigured_returns_none(query_h, monkeypatch):
+    # ID 未設定は設定ミス＝障害扱い（文書0件と混同しない）
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "")
+    assert query_h._search_kb("q") is None
+
+
+def test_search_kb_zero_hits_returns_empty_list(query_h, monkeypatch):
+    # 正常応答で0件は [] のまま（「文書が無い」は障害ではない）
+    class _Empty:
+        def retrieve(self, **kw):
+            return {"retrievalResults": []}
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "kb-test")
+    monkeypatch.setattr(query_h, "bedrock_agent_runtime", _Empty())
+    assert query_h._search_kb("q") == []
+
+
+def test_dual_both_paths_down_returns_none(query_h, monkeypatch):
+    # dual で precise 障害→fast へフォールバック→fast も障害なら None が伝播（503）
+    monkeypatch.setattr(query_h, "VECTOR_STORE_TYPE", "dual")
+    monkeypatch.setattr(query_h, "_search_opensearch_hybrid", lambda q: None)
+    monkeypatch.setattr(query_h, "_search_kb", lambda q: None)
+    ctx, mode, fb = query_h.search_documents("q", mode="precise")
+    assert ctx is None
+
+
+def test_handler_returns_503_on_search_failure(query_h, lambda_context, monkeypatch):
+    # 検索系の障害は 200＋「文書なし」ではなく 503 で返す（handler レベルの固定）
+    monkeypatch.setattr(query_h, "get_session_id", lambda uid: "s1")
+    monkeypatch.setattr(query_h, "get_conversation_history", lambda uid, sid: [])
+    monkeypatch.setattr(query_h, "search_documents",
+                        lambda q, mode: (None, "fast", False))
+    event = {"body": json.dumps({"question": "x"}),
+             "requestContext": {"authorizer": {"claims": {"sub": "u1"}}}}
+    resp = query_h.handler(event, lambda_context)
+    assert resp["statusCode"] == 503
+
+
+# ---------- 500 応答の情報漏洩防止（内部詳細を返さない） ----------
+
+def test_handler_500_does_not_leak_exception_detail(query_h, lambda_context, monkeypatch):
+    def _boom(uid):
+        raise RuntimeError("arn:aws:dynamodb:table/secret-internal-name")
+    monkeypatch.setattr(query_h, "get_session_id", _boom)
+    event = {"body": json.dumps({"question": "x"}),
+             "requestContext": {"authorizer": {"claims": {"sub": "u1"}}}}
+    resp = query_h.handler(event, lambda_context)
+    assert resp["statusCode"] == 500
+    assert "secret-internal-name" not in resp["body"]
