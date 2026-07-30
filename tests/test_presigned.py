@@ -100,3 +100,20 @@ def test_fast_ready_inprogress_job_not_ready(presigned_h, monkeypatch):
         "ingestionJobSummaries": [{"ingestionJobId": "J1", "status": "IN_PROGRESS"}]}
     monkeypatch.setattr(presigned_h, "bedrock_agent", bedrock)
     assert presigned_h._fast_ready("doc.pdf") == {"ready": False}
+
+
+# ---------- 500 応答の情報漏洩防止（内部詳細を返さない） ----------
+
+def test_handler_clienterror_does_not_leak_detail(presigned_h, monkeypatch):
+    # ClientError の文言はバケット名等の内部情報を含み得る → 固定文言で返す
+    from botocore.exceptions import ClientError
+
+    def _boom(event):
+        raise ClientError(
+            {"Error": {"Code": "AccessDenied",
+                       "Message": "denied for bucket secret-internal-bucket"}},
+            "GeneratePresignedUrl")
+    monkeypatch.setattr(presigned_h, "create_presigned", _boom)
+    resp = presigned_h.handler({"httpMethod": "POST", "resource": "/upload"}, None)
+    assert resp["statusCode"] == 500
+    assert "secret-internal-bucket" not in resp["body"]
