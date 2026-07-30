@@ -189,8 +189,10 @@ def handler(event, context):
             return get_status(event)
         return create_presigned(event)
     except ClientError as e:
+        # 例外詳細はログのみ。ClientError の文言はバケット名等の内部情報を含み得る
+        # ため、応答は下の未捕捉例外と同じ固定文言にする。
         print(f"Error: {str(e)}")
-        return _resp(500, {"error": str(e)})
+        return _resp(500, {"error": "内部エラーが発生しました"})
     except Exception as e:
         # 未捕捉例外は API GW の 502（CORS ヘッダ無し）になり、ブラウザでは
         # 原因不明のネットワークエラーに見えるため、必ず CORS 付き 500 で返す
