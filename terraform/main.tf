@@ -204,7 +204,10 @@ module "budgets" {
 }
 
 module "cloudwatch" {
-  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=v2.2.34"
+  # v2.2.41相当（改善#03のカスタムメトリクス3種をダッシュボードに追加）。
+  # タグpushがこの環境の権限では不可だったためコミットSHA直接参照（機能的にタグと同等）。
+  # 後日 GitHub 上でこの commit に v2.2.41 タグを打てば通常の運用に戻せる。
+  source       = "github.com/Yuki670926/rag-portfolio-modules//cloudwatch?ref=0eb898a69e2147a8fb85e552dc49b7d67fe30280"
   project_name = local.project_name
   aws_region   = var.aws_region
   alert_email  = module.budgets.alert_email
