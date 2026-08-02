@@ -49,6 +49,11 @@ def authorizer_h():
     return _load("authorizer_handler", "authorizer/handler.py")
 
 
+@pytest.fixture(scope="session")
+def postauth_h():
+    return _load("postauth_handler", "postauth/handler.py")
+
+
 @pytest.fixture
 def lambda_context():
     """Powertools の inject_lambda_context が要求する属性を持つダミー context。"""

@@ -87,6 +87,7 @@ def _search_kb(question):
     503 にする。正常0件（retrievalResults が空）はこれまで通り [] を返す。"""
     if not KNOWLEDGE_BASE_ID:
         logger.error("KNOWLEDGE_BASE_ID not configured")
+        metrics.add_metric(name="RetrievalFailure", unit=MetricUnit.Count, value=1)
         return None
     try:
         response = bedrock_agent_runtime.retrieve(
@@ -107,6 +108,9 @@ def _search_kb(question):
         return results
     except Exception as e:
         logger.error(f"KB Retrieve error: {str(e)}")
+        # 改善#01で潰した「障害の無音化」の再発監視。fast/precise 両経路で共通の
+        # RetrievalFailure として計上する（正常0件は計上しない＝下の分岐参照）
+        metrics.add_metric(name="RetrievalFailure", unit=MetricUnit.Count, value=1)
         return None
 
 
@@ -131,6 +135,7 @@ def _search_opensearch_hybrid(question):
     （warmup が 404 を warm 扱いするのと同じ整理）。"""
     endpoint = get_vector_store_endpoint()
     if not endpoint:
+        metrics.add_metric(name="RetrievalFailure", unit=MetricUnit.Count, value=1)
         return None
     try:
         client = get_opensearch_client(endpoint)
@@ -149,6 +154,7 @@ def _search_opensearch_hybrid(question):
             logger.info("documents index not created yet (no documents); empty result")
             return []
         logger.error(f"OpenSearch hybrid error: {str(e)}")
+        metrics.add_metric(name="RetrievalFailure", unit=MetricUnit.Count, value=1)
         return None
 
 
@@ -228,6 +234,9 @@ def save_conversation(user_id, session_id, question, answer):
         })
     except Exception as e:
         logger.error(f"DynamoDB save error: {str(e)}")
+        # 保存失敗は握り潰して200を継続する設計（1メッセージのために回答全体を落とさない）。
+        # 無音のままだと利用者側で気づけないため、傾向把握・原因究明用に計上する
+        metrics.add_metric(name="ConversationSaveFailure", unit=MetricUnit.Count, value=1)
 
 def save_session(user_id, session_id):
     try:
@@ -242,6 +251,7 @@ def save_session(user_id, session_id):
         })
     except Exception as e:
         logger.error(f"DynamoDB session save error: {str(e)}")
+        metrics.add_metric(name="ConversationSaveFailure", unit=MetricUnit.Count, value=1)
 
 def generate_answer(question, contexts, history):
     context_text = "\n\n".join([
