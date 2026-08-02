@@ -6,6 +6,7 @@
 - dual のモード分岐とフォールバック（precise コールド→fast、opensearch 単独の障害→None=503）
 """
 import json
+from unittest import mock
 
 
 # ---------- _rrf_merge（純ロジック） ----------
@@ -166,3 +167,114 @@ def test_handler_500_does_not_leak_exception_detail(query_h, lambda_context, mon
     resp = query_h.handler(event, lambda_context)
     assert resp["statusCode"] == 500
     assert "secret-internal-name" not in resp["body"]
+
+
+# ---------- カスタムメトリクス：沈黙する失敗を数える（改善#03） ----------
+
+def test_search_kb_failure_emits_retrieval_failure_metric(query_h, monkeypatch):
+    class _Boom:
+        def retrieve(self, **kw):
+            raise RuntimeError("kb down")
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "kb-test")
+    monkeypatch.setattr(query_h, "bedrock_agent_runtime", _Boom())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h._search_kb("q")
+    metric_mock.assert_called_once_with(
+        name="RetrievalFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_search_kb_unconfigured_emits_retrieval_failure_metric(query_h, monkeypatch):
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "")
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h._search_kb("q")
+    metric_mock.assert_called_once_with(
+        name="RetrievalFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_search_kb_zero_hits_does_not_emit_metric(query_h, monkeypatch):
+    # 正常に0件は障害ではない＝メトリクスも計上しない（ここが逆方向の退行を防ぐ）
+    class _Empty:
+        def retrieve(self, **kw):
+            return {"retrievalResults": []}
+    monkeypatch.setattr(query_h, "KNOWLEDGE_BASE_ID", "kb-test")
+    monkeypatch.setattr(query_h, "bedrock_agent_runtime", _Empty())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h._search_kb("q")
+    metric_mock.assert_not_called()
+
+
+def test_opensearch_hybrid_index_not_found_does_not_emit_metric(query_h, monkeypatch):
+    # 文書ゼロの新環境（index_not_found）は正常状態。メトリクスは計上しない
+    monkeypatch.setattr(query_h, "get_vector_store_endpoint", lambda: "https://example.com")
+    monkeypatch.setattr(query_h, "get_embedding", lambda text: [0.1, 0.2])
+
+    class _Client:
+        def search(self, **kw):
+            raise RuntimeError("index_not_found_exception: no such index")
+    monkeypatch.setattr(query_h, "get_opensearch_client", lambda endpoint: _Client())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    result = query_h._search_opensearch_hybrid("q")
+    assert result == []
+    metric_mock.assert_not_called()
+
+
+def test_opensearch_hybrid_real_failure_emits_metric(query_h, monkeypatch):
+    monkeypatch.setattr(query_h, "get_vector_store_endpoint", lambda: "https://example.com")
+    monkeypatch.setattr(query_h, "get_embedding", lambda text: [0.1, 0.2])
+
+    class _Client:
+        def search(self, **kw):
+            raise RuntimeError("connection refused")
+    monkeypatch.setattr(query_h, "get_opensearch_client", lambda endpoint: _Client())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    result = query_h._search_opensearch_hybrid("q")
+    assert result is None
+    metric_mock.assert_called_once_with(
+        name="RetrievalFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_opensearch_hybrid_no_endpoint_emits_metric(query_h, monkeypatch):
+    monkeypatch.setattr(query_h, "get_vector_store_endpoint", lambda: "")
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    result = query_h._search_opensearch_hybrid("q")
+    assert result is None
+    metric_mock.assert_called_once_with(
+        name="RetrievalFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_save_conversation_failure_emits_metric(query_h, monkeypatch):
+    class _Table:
+        def put_item(self, **kw):
+            raise RuntimeError("throttled")
+    monkeypatch.setattr(query_h.dynamodb, "Table", lambda name: _Table())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h.save_conversation("u1", "s1", "q", "a")
+    metric_mock.assert_called_once_with(
+        name="ConversationSaveFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_save_session_failure_emits_metric(query_h, monkeypatch):
+    class _Table:
+        def put_item(self, **kw):
+            raise RuntimeError("throttled")
+    monkeypatch.setattr(query_h.dynamodb, "Table", lambda name: _Table())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h.save_session("u1", "s1")
+    metric_mock.assert_called_once_with(
+        name="ConversationSaveFailure", unit=query_h.MetricUnit.Count, value=1)
+
+
+def test_save_conversation_success_does_not_emit_metric(query_h, monkeypatch):
+    monkeypatch.setattr(query_h.dynamodb, "Table", lambda name: mock.MagicMock())
+    metric_mock = mock.MagicMock()
+    monkeypatch.setattr(query_h.metrics, "add_metric", metric_mock)
+    query_h.save_conversation("u1", "s1", "q", "a")
+    metric_mock.assert_not_called()
