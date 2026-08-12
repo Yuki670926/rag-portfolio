@@ -10,6 +10,8 @@ name: Terraform Destroy (dispatch)
 # - run #1: module.github_actions（CI自身のOIDC/ロール）をdestroy対象に含めて自己切断 → state rm で退避
 # - run #4: state list に非対応の -lock=false を付与してエラー→ 2>/dev/null が握り潰して
 #   「0行＝state空」誤判定→偽の成功。エラーは沈黙させず失敗させること
+# - run #7: 部分destroy後の再planで aoss_collection_group_id が未確定化し for_each エラー
+#   → vector_store=s3_vectors 上書きで module.opensearch を count=0 に落として回避
 
 on:
   workflow_dispatch:
@@ -26,6 +28,15 @@ on:
         description: '確認のため destroy と入力'
         type: string
         required: true
+      vector_store:
+        description: "ベクトルストア上書き（部分destroy後の for_each 未確定エラー回避用。destroy対象は state 基準のため変わらない）"
+        type: choice
+        options:
+          - keep
+          - s3_vectors
+          - opensearch
+          - dual
+        default: keep
 
 # plan/apply と同じ group で直列化（destroy 中の apply 混入を防ぐ）
 concurrency:
@@ -93,6 +104,13 @@ jobs:
           # このワークフローは concurrency group で直列化済み。※ state list は -lock 非対応なので付けないこと
           LOCKOPT="-lock=false"
 
+          # ベクトルストアの上書き（for_each 未確定エラー回避用）
+          EXTRA=""
+          if [ "${{ inputs.vector_store }}" != "keep" ]; then
+            EXTRA="-var=vector_store_type=${{ inputs.vector_store }}"
+            echo "override: $EXTRA"
+          fi
+
           # 【最重要】CI 自身の認証基盤を destroy 対象から外す（自己切断防止）
           for addr in $(echo "$STATE_LIST" | grep '^module\.github_actions\.' || true); do
             terraform state rm $LOCKOPT "$addr"
@@ -147,12 +165,12 @@ jobs:
 
           # destroy 本体（失敗時：残バケットを再パージして 1 回だけリトライ。destroy は冪等）
           VF="environments/${{ inputs.environment }}.tfvars"
-          if terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF"; then
+          if terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF" $EXTRA; then
             exit 0
           fi
           echo "::warning::destroy failed once — re-purging buckets and retrying"
           purge_all
-          terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF"
+          terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF" $EXTRA
 
       - name: Post check
         working-directory: terraform
