@@ -1,0 +1,78 @@
+name: AWS Diag (read-only dispatch)
+
+# 読み取り専用の棚卸し。tfstate の実態（バージョン履歴含む）と、
+# 実際に生きているリソースを直接確認する。何も変更しない。
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "対象環境"
+        type: choice
+        options:
+          - dev
+          - stag
+          - prod
+        default: dev
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: Inspect tfstate object
+        run: |
+          set -uo pipefail
+          ENV="${{ inputs.environment }}"
+          BUCKET=$(grep -o 'bucket *= *"[^"]*"' "terraform/environments/${ENV}-backend.hcl" | cut -d'"' -f2)
+          KEY=$(grep -o 'key *= *"[^"]*"' "terraform/environments/${ENV}-backend.hcl" | cut -d'"' -f2)
+          echo "=== state bucket: $BUCKET / key: $KEY ==="
+          echo "--- current object ---"
+          aws s3api head-object --bucket "$BUCKET" --key "$KEY" --query '{Size:ContentLength, LastModified:LastModified}' --output json || echo "HEAD FAILED (object missing or delete-marker on top)"
+          echo "--- version history (最新順) ---"
+          aws s3api list-object-versions --bucket "$BUCKET" --prefix "$KEY" \
+            --query '{Versions: Versions[].{Id:VersionId, Latest:IsLatest, Size:Size, At:LastModified}, DeleteMarkers: DeleteMarkers[].{Id:VersionId, Latest:IsLatest, At:LastModified}}' \
+            --output json || echo "list-object-versions FAILED"
+          echo "--- current state resource count ---"
+          aws s3 cp "s3://$BUCKET/$KEY" /tmp/state.json 2>/dev/null \
+            && jq '{serial: .serial, lineage: .lineage, resources: (.resources | length)}' /tmp/state.json \
+            || echo "state download FAILED"
+
+      - name: Inventory live resources
+        run: |
+          set -uo pipefail
+          ENV="${{ inputs.environment }}"
+          P="rp-${ENV}"
+          echo "=== live resources with prefix ${P} (region ap-northeast-1) ==="
+          echo "--- CloudFront distributions (global) ---"
+          aws cloudfront list-distributions --query 'DistributionList.Items[].{Id:Id, Comment:Comment, Status:Status, Enabled:Enabled}' --output json 2>/dev/null || echo none
+          echo "--- Lambda functions ---"
+          aws lambda list-functions --query "Functions[?starts_with(FunctionName, '${P}')].FunctionName" --output json
+          echo "--- DynamoDB tables ---"
+          aws dynamodb list-tables --query "TableNames[?starts_with(@, '${P}')]" --output json
+          echo "--- Cognito user pools ---"
+          aws cognito-idp list-user-pools --max-results 20 --query 'UserPools[].Name' --output json
+          echo "--- API Gateway REST APIs ---"
+          aws apigateway get-rest-apis --query 'items[].name' --output json
+          echo "--- OpenSearch Serverless collections ---"
+          aws opensearchserverless list-collections --query 'collectionSummaries[].name' --output json 2>/dev/null || echo 'aoss: none/unavailable'
+          echo "--- S3 buckets ---"
+          aws s3api list-buckets --query "Buckets[?starts_with(Name, '${P}')].Name" --output json
+          echo "--- SQS queues ---"
+          aws sqs list-queues --queue-name-prefix "${P}" --output json 2>/dev/null || echo 'sqs: none'
+          echo "--- KMS keys (pending deletion 含む) ---"
+          for k in $(aws kms list-keys --query 'Keys[].KeyId' --output text); do
+            aws kms describe-key --key-id "$k" --query 'KeyMetadata.{Id:KeyId, State:KeyState, Desc:Description}' --output json 2>/dev/null | jq -c 'select(.State != "PendingDeletion" or .State == "PendingDeletion")'
+          done | head -40
+          echo "=== inventory done ==="
