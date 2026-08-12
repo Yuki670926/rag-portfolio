@@ -7,9 +7,12 @@ name: Terraform Destroy (dispatch)
 # サプライチェーン対策：_terraform.yml と同じく action はフルコミット SHA で固定。
 #
 # destroy 固有の前処理（このリポジトリの設計で必要になるもの）：
-# - CloudTrail stop-logging（trail が動いたままだとログバケットを空にしても再流入して BucketNotEmpty が再発する）
-# - バージョニング付きバケットの全バージョン・削除マーカーのパージ（force_destroy=false の設計のため）
-# - prod のみ：documents 破壊ガード（terraform_data）の state rm、DynamoDB/Cognito の削除保護解除
+# - 【重要】module.github_actions（CI自身の OIDC プロバイダ・実行ロール）を state から退避。
+#   destroy 対象に含めると自分の認証を先に削除して以降が全滑りする（run 31573527910 の教訓）。
+#   IAM ロール/OIDC プロバイダは無料のため残置でコスト0。再 apply 時は import で取り込む。
+# - CloudTrail stop-logging（ログ再流入で BucketNotEmpty が再発するのを防ぐ）
+# - バージョニング付きバケットの全バージョン・削除マーカーのパージ（force_destroy=false のため）
+# - prod のみ：documents 破壊ガードの state rm、DynamoDB/Cognito の削除保護解除
 
 on:
   workflow_dispatch:
@@ -76,16 +79,24 @@ jobs:
         run: |
           set -uo pipefail
 
-          if [ "$(terraform state list 2>/dev/null | wc -l)" -eq 0 ]; then
+          # 前回失敗でロック解放に失敗している可能性があるため -lock=false で操作する。
+          # このワークフローは concurrency group で直列化済み（同時実行は構造上起きない）。
+          LOCKOPT="-lock=false"
+
+          if [ "$(terraform state list $LOCKOPT 2>/dev/null | wc -l)" -eq 0 ]; then
             echo "state is empty — nothing to destroy"
             exit 0
           fi
 
-          # --- prod のみ存在する保護の解除（dev/stag では該当なしで素通り） ---
+          # 【最重要】CI 自身の認証基盤を destroy 対象から外す（自己切断防止）。
+          # 先頭で実施すること。IAM/OIDC は無料のため残置でコスト影響なし。
+          for addr in $(terraform state list $LOCKOPT | grep '^module\.github_actions\.' || true); do
+            terraform state rm $LOCKOPT "$addr"
+          done
 
-          # documents 破壊ガード：実インフラを持たない terraform_data のため state から外すだけで安全
-          for addr in $(terraform state list | grep 'documents_destroy_guard' || true); do
-            terraform state rm "$addr"
+          # documents 破壊ガード（prod のみ存在）：実インフラを持たない terraform_data のため state rm で安全
+          for addr in $(terraform state list $LOCKOPT | grep 'documents_destroy_guard' || true); do
+            terraform state rm $LOCKOPT "$addr"
           done
 
           STATE_JSON=$(terraform show -json)
@@ -102,12 +113,12 @@ jobs:
               && echo "deletion protection off: $p" || true
           done
 
-          # --- CloudTrail を止める（ログ再流入で BucketNotEmpty が再発するのを防ぐ） ---
+          # CloudTrail を止める（ログ再流入で BucketNotEmpty が再発するのを防ぐ）
           for t in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_cloudtrail") | .values.name] | unique[]'); do
             aws cloudtrail stop-logging --name "$t" 2>/dev/null && echo "stopped trail: $t" || true
           done
 
-          # --- バージョニング付きバケットのパージ（全バージョン + 削除マーカー） ---
+          # バージョニング付きバケットのパージ（全バージョン + 削除マーカー）
           purge_bucket() {
             local b="$1"
             aws s3api head-bucket --bucket "$b" 2>/dev/null || { echo "skip (not found): $b"; return 0; }
@@ -130,19 +141,19 @@ jobs:
           }
           purge_all
 
-          # --- destroy 本体（失敗時：残バケットを再パージして 1 回だけリトライ。destroy は冪等） ---
+          # destroy 本体（失敗時：残バケットを再パージして 1 回だけリトライ。destroy は冪等）
           VF="environments/${{ inputs.environment }}.tfvars"
-          if terraform destroy -auto-approve -no-color -var-file="$VF"; then
+          if terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF"; then
             exit 0
           fi
           echo "::warning::destroy failed once — re-purging buckets and retrying"
           purge_all
-          terraform destroy -auto-approve -no-color -var-file="$VF"
+          terraform destroy -auto-approve -no-color $LOCKOPT -var-file="$VF"
 
       - name: Post check
         working-directory: terraform
         run: |
-          LEFT=$(terraform state list 2>/dev/null | wc -l)
+          LEFT=$(terraform state list -lock=false 2>/dev/null | wc -l)
           echo "remaining resources in state: $LEFT"
-          terraform state list 2>/dev/null || true
+          terraform state list -lock=false 2>/dev/null || true
           [ "$LEFT" -eq 0 ] && echo "environment fully destroyed" || exit 1
