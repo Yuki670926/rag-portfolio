@@ -1,0 +1,148 @@
+name: Terraform Destroy (dispatch)
+
+# 環境の完全撤収用。当面使わない環境を destroy してランニングコストをほぼ 0 にする。
+# コードと tfstate バックエンドは残るため、tf-apply.yml の apply でいつでも再生できる。
+#
+# 誤爆防止：confirm に "destroy" と手入力しない限りジョブは実行されない。
+# サプライチェーン対策：_terraform.yml と同じく action はフルコミット SHA で固定。
+#
+# destroy 固有の前処理（このリポジトリの設計で必要になるもの）：
+# - CloudTrail stop-logging（trail が動いたままだとログバケットを空にしても再流入して BucketNotEmpty が再発する）
+# - バージョニング付きバケットの全バージョン・削除マーカーのパージ（force_destroy=false の設計のため）
+# - prod のみ：documents 破壊ガード（terraform_data）の state rm、DynamoDB/Cognito の削除保護解除
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "破棄する環境"
+        type: choice
+        options:
+          - dev
+          - stag
+          - prod
+        default: dev
+      confirm:
+        description: '確認のため destroy と入力'
+        type: string
+        required: true
+
+# plan/apply と同じ group で直列化（destroy 中の apply 混入を防ぐ）
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    if: inputs.confirm == 'destroy'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.2
+          terraform_wrapper: false # スクリプト内で $(terraform show -json) を使うため wrapper の標準出力装飾を無効化
+
+      # destroy でも構成全体が評価されるため、apply と同様に layer 成果物が必要
+      - name: Build Lambda layers
+        run: |
+          bash scripts/build-layer.sh authorizer
+          bash scripts/build-layer.sh ingest-query
+
+      - name: Restore tfvars from secret
+        run: |
+          cat > terraform/environments/${{ inputs.environment }}.tfvars << 'EOF'
+          ${{ secrets.TFVARS }}
+          EOF
+
+      - name: Terraform Init
+        run: terraform init -backend-config="environments/${{ inputs.environment }}-backend.hcl" -reconfigure
+        working-directory: terraform
+
+      - name: Pre-clean and destroy
+        working-directory: terraform
+        run: |
+          set -uo pipefail
+
+          if [ "$(terraform state list 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "state is empty — nothing to destroy"
+            exit 0
+          fi
+
+          # --- prod のみ存在する保護の解除（dev/stag では該当なしで素通り） ---
+
+          # documents 破壊ガード：実インフラを持たない terraform_data のため state から外すだけで安全
+          for addr in $(terraform state list | grep 'documents_destroy_guard' || true); do
+            terraform state rm "$addr"
+          done
+
+          STATE_JSON=$(terraform show -json)
+
+          # DynamoDB 削除保護（prod で true）を解除
+          for t in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_dynamodb_table") | .values.name] | unique[]'); do
+            aws dynamodb update-table --table-name "$t" --no-deletion-protection-enabled > /dev/null 2>&1 \
+              && echo "deletion protection off: $t" || true
+          done
+
+          # Cognito User Pool 削除保護（prod で ACTIVE）を解除（直後に破棄するため他属性のリセットは許容）
+          for p in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_cognito_user_pool") | .values.id] | unique[]'); do
+            aws cognito-idp update-user-pool --user-pool-id "$p" --deletion-protection INACTIVE > /dev/null 2>&1 \
+              && echo "deletion protection off: $p" || true
+          done
+
+          # --- CloudTrail を止める（ログ再流入で BucketNotEmpty が再発するのを防ぐ） ---
+          for t in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_cloudtrail") | .values.name] | unique[]'); do
+            aws cloudtrail stop-logging --name "$t" 2>/dev/null && echo "stopped trail: $t" || true
+          done
+
+          # --- バージョニング付きバケットのパージ（全バージョン + 削除マーカー） ---
+          purge_bucket() {
+            local b="$1"
+            aws s3api head-bucket --bucket "$b" 2>/dev/null || { echo "skip (not found): $b"; return 0; }
+            echo "purge: $b"
+            while :; do
+              local out batch n
+              out=$(aws s3api list-object-versions --bucket "$b" --max-keys 1000 --output json 2>/dev/null) || break
+              batch=$(echo "$out" | jq '{Objects: ([(.Versions // [])[], (.DeleteMarkers // [])[]] | map({Key: .Key, VersionId: .VersionId})), Quiet: true}')
+              n=$(echo "$batch" | jq '.Objects | length')
+              [ "$n" -eq 0 ] && break
+              echo "$batch" > /tmp/del.json
+              aws s3api delete-objects --bucket "$b" --delete file:///tmp/del.json > /dev/null
+              echo "  deleted $n versions"
+            done
+          }
+          purge_all() {
+            for b in $(terraform show -json | jq -r '[.. | objects | select(.type? == "aws_s3_bucket") | .values.bucket] | unique[]'); do
+              purge_bucket "$b"
+            done
+          }
+          purge_all
+
+          # --- destroy 本体（失敗時：残バケットを再パージして 1 回だけリトライ。destroy は冪等） ---
+          VF="environments/${{ inputs.environment }}.tfvars"
+          if terraform destroy -auto-approve -no-color -var-file="$VF"; then
+            exit 0
+          fi
+          echo "::warning::destroy failed once — re-purging buckets and retrying"
+          purge_all
+          terraform destroy -auto-approve -no-color -var-file="$VF"
+
+      - name: Post check
+        working-directory: terraform
+        run: |
+          LEFT=$(terraform state list 2>/dev/null | wc -l)
+          echo "remaining resources in state: $LEFT"
+          terraform state list 2>/dev/null || true
+          [ "$LEFT" -eq 0 ] && echo "environment fully destroyed" || exit 1
