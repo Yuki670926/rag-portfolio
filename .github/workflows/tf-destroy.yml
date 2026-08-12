@@ -6,13 +6,10 @@ name: Terraform Destroy (dispatch)
 # 誤爆防止：confirm に "destroy" と手入力しない限りジョブは実行されない。
 # サプライチェーン対策：_terraform.yml と同じく action はフルコミット SHA で固定。
 #
-# destroy 固有の前処理（このリポジトリの設計で必要になるもの）：
-# - 【重要】module.github_actions（CI自身の OIDC プロバイダ・実行ロール）を state から退避。
-#   destroy 対象に含めると自分の認証を先に削除して以降が全滑りする（run 31573527910 の教訓）。
-#   IAM ロール/OIDC プロバイダは無料のため残置でコスト0。再 apply 時は import で取り込む。
-# - CloudTrail stop-logging（ログ再流入で BucketNotEmpty が再発するのを防ぐ）
-# - バージョニング付きバケットの全バージョン・削除マーカーのパージ（force_destroy=false のため）
-# - prod のみ：documents 破壊ガードの state rm、DynamoDB/Cognito の削除保護解除
+# 運用上の教訓（このワークフロー自身の障害履歴から）：
+# - run #1: module.github_actions（CI自身のOIDC/ロール）をdestroy対象に含めて自己切断 → state rm で退避
+# - run #4: state list に非対応の -lock=false を付与してエラー→ 2>/dev/null が握り潰して
+#   「0行＝state空」誤判定→偽の成功。エラーは沈黙させず失敗させること
 
 on:
   workflow_dispatch:
@@ -56,7 +53,7 @@ jobs:
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.15.2
-          terraform_wrapper: false # スクリプト内で $(terraform show -json) を使うため wrapper の標準出力装飾を無効化
+          terraform_wrapper: false # スクリプト内で $(terraform …) を使うため wrapper の標準出力装飾を無効化
 
       # destroy でも構成全体が評価されるため、apply と同様に layer 成果物が必要
       - name: Build Lambda layers
@@ -79,35 +76,42 @@ jobs:
         run: |
           set -uo pipefail
 
-          # 前回失敗でロック解放に失敗している可能性があるため -lock=false で操作する。
-          # このワークフローは concurrency group で直列化済み（同時実行は構造上起きない）。
-          LOCKOPT="-lock=false"
-
-          if [ "$(terraform state list $LOCKOPT 2>/dev/null | wc -l)" -eq 0 ]; then
+          # state の棚卸し。失敗したら沈黙せず落とす（「読めない」と「空」を混同しない）
+          if ! STATE_LIST=$(terraform state list 2>&1); then
+            echo "::error::terraform state list failed:"
+            echo "$STATE_LIST"
+            exit 1
+          fi
+          COUNT=$(echo "$STATE_LIST" | grep -c . || true)
+          echo "resources in state: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
             echo "state is empty — nothing to destroy"
             exit 0
           fi
 
-          # 【最重要】CI 自身の認証基盤を destroy 対象から外す（自己切断防止）。
-          # 先頭で実施すること。IAM/OIDC は無料のため残置でコスト影響なし。
-          for addr in $(terraform state list $LOCKOPT | grep '^module\.github_actions\.' || true); do
+          # 前回失敗でロック解放に失敗している可能性があるため、対応コマンド（state rm / destroy）にのみ -lock=false。
+          # このワークフローは concurrency group で直列化済み。※ state list は -lock 非対応なので付けないこと
+          LOCKOPT="-lock=false"
+
+          # 【最重要】CI 自身の認証基盤を destroy 対象から外す（自己切断防止）
+          for addr in $(echo "$STATE_LIST" | grep '^module\.github_actions\.' || true); do
             terraform state rm $LOCKOPT "$addr"
           done
 
           # documents 破壊ガード（prod のみ存在）：実インフラを持たない terraform_data のため state rm で安全
-          for addr in $(terraform state list $LOCKOPT | grep 'documents_destroy_guard' || true); do
+          for addr in $(echo "$STATE_LIST" | grep 'documents_destroy_guard' || true); do
             terraform state rm $LOCKOPT "$addr"
           done
 
           STATE_JSON=$(terraform show -json)
 
-          # DynamoDB 削除保護（prod で true）を解除
+          # DynamoDB 削除保護（prod で true）を解除（既に削除済みのテーブルは失敗してよい）
           for t in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_dynamodb_table") | .values.name] | unique[]'); do
             aws dynamodb update-table --table-name "$t" --no-deletion-protection-enabled > /dev/null 2>&1 \
               && echo "deletion protection off: $t" || true
           done
 
-          # Cognito User Pool 削除保護（prod で ACTIVE）を解除（直後に破棄するため他属性のリセットは許容）
+          # Cognito User Pool 削除保護（prod で ACTIVE）を解除
           for p in $(echo "$STATE_JSON" | jq -r '[.. | objects | select(.type? == "aws_cognito_user_pool") | .values.id] | unique[]'); do
             aws cognito-idp update-user-pool --user-pool-id "$p" --deletion-protection INACTIVE > /dev/null 2>&1 \
               && echo "deletion protection off: $p" || true
@@ -153,7 +157,13 @@ jobs:
       - name: Post check
         working-directory: terraform
         run: |
-          LEFT=$(terraform state list -lock=false 2>/dev/null | wc -l)
+          set -uo pipefail
+          if ! STATE_LIST=$(terraform state list 2>&1); then
+            echo "::error::terraform state list failed (検証不能＝成功とは見なさない):"
+            echo "$STATE_LIST"
+            exit 1
+          fi
+          LEFT=$(echo "$STATE_LIST" | grep -c . || true)
           echo "remaining resources in state: $LEFT"
-          terraform state list -lock=false 2>/dev/null || true
+          echo "$STATE_LIST"
           [ "$LEFT" -eq 0 ] && echo "environment fully destroyed" || exit 1
